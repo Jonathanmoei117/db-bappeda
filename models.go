@@ -2,91 +2,126 @@ package main
 
 import "time"
 
+// OPD merepresentasikan tabel master untuk Organisasi Perangkat Daerah.
+type OPD struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	NamaOPD   string    `gorm:"unique;not null" json:"nama_opd"`
+	AlamatOPD string    `json:"alamat_opd"`
+	Users     []UserOPD `gorm:"foreignKey:OPDID" json:"-"`
+}
+
 // UserOPD merepresentasikan petugas OPD yang menginput data layanan.
 type UserOPD struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	Nama      string    `json:"nama"`
-	Username  string    `gorm:"unique" json:"username"`
-	Password  string    `json:"-"`
-	NIP       string    `gorm:"unique" json:"nip"`
+	OPDID     uint      `gorm:"not null" json:"opd_id"`
+	Nama      string    `gorm:"not null" json:"nama"`
+	NIP       string    `gorm:"unique;not null" json:"nip"` // NIP digunakan untuk login
+	Password  string    `gorm:"not null" json:"-"`
 	Jabatan   string    `json:"jabatan"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Relasi
+	OPD                       OPD                       `gorm:"foreignKey:OPDID" json:"opd"`
+	LayananPembangunans       []LayananPembangunan      `gorm:"foreignKey:UserOPDID" json:"-"`
+	LayananAdministrasis      []LayananAdministrasi     `gorm:"foreignKey:UserOPDID" json:"-"`
+	LayananInformasiPengaduans []LayananInformasiPengaduan `gorm:"foreignKey:UserOPDID" json:"-"`
 }
 
 // UserPemda merepresentasikan user dari Pemda yang melakukan validasi.
 type UserPemda struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	Nama      string    `json:"nama"`
-	Username  string    `gorm:"unique" json:"username"`
-	Password  string    `json:"-"`
-	NIP       string    `gorm:"unique" json:"nip"`
+	Nama      string    `gorm:"not null" json:"nama"`
+	NIP       string    `gorm:"unique;not null" json:"nip"` // NIP digunakan untuk login
+	Password  string    `gorm:"not null" json:"-"`
 	Jabatan   string    `json:"jabatan"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Relasi
+	ValidatedLayananPembangunans      []LayananPembangunan      `gorm:"foreignKey:IDValidatorPemda" json:"-"`
+	ValidatedLayananAdministrasis      []LayananAdministrasi     `gorm:"foreignKey:IDValidatorPemda" json:"-"`
+	ValidatedLayananInformasiPengaduans []LayananInformasiPengaduan `gorm:"foreignKey:IDValidatorPemda" json:"-"`
 }
 
-// LayananPembangunan merepresentasikan kegiatan/layanan terkait pembangunan daerah.
+// ======== STRUCT LAYANAN (DIPISAH) ========
+
+// LayananPembangunan merepresentasikan entitas di tabel Layanan_Pembangunan.
 type LayananPembangunan struct {
-	ID                 uint       `gorm:"primaryKey" json:"id"`
-	UserOPDID          uint       `json:"user_opd_id"`
-	JenisLayanan       string     `json:"jenis_layanan"`
-	JudulKegiatan      string     `json:"judul_kegiatan"`
-	Deskripsi          string     `json:"deskripsi"`
-	Status             string     `json:"status"`
-	TanggalKegiatan    time.Time  `json:"tanggal_kegiatan"`
-	Lokasi             string     `json:"lokasi"`
-	Catatan            string     `json:"catatan"`
-	CreatedAt          time.Time  `json:"created_at"`
+	ID                  uint       `gorm:"primaryKey" json:"id"`
+	UserOPDID           uint       `gorm:"not null" json:"user_opd_id"`
+	JudulKegiatan       string     `gorm:"not null" json:"judul_kegiatan"`
+	Deskripsi           string     `json:"deskripsi"`
+	NamaPemohon         string     `gorm:"not null" json:"nama_pemohon"`
+	NIPPemohon          *string    `json:"nip_pemohon"`
+	InstansiPemohon     string     `gorm:"not null" json:"instansi_pemohon"`
+	PeriodeMulai        *time.Time `json:"periode_mulai"`
+	PeriodeSelesai      *time.Time `json:"periode_selesai"`
+	BerkasPengajuanPath *string    `json:"berkas_pengajuan_path"`
+	StatusProses        string     `gorm:"not null;default:'Baru'" json:"status_proses"`
+	CreatedAt           time.Time  `json:"created_at"`
+
+	// Kolom Validasi
 	IDValidatorPemda   *uint      `json:"id_validator_pemda"`
-	StatusValidasi     string     `gorm:"default:'Menunggu Validasi'" json:"status_validasi"`
+	StatusValidasi     string     `gorm:"not null;default:'Menunggu Validasi'" json:"status_validasi"`
 	KeteranganValidasi string     `json:"keterangan_validasi"`
 	TanggalValidasi    *time.Time `json:"tanggal_validasi"`
-	UserOPD            UserOPD    `gorm:"foreignKey:UserOPDID" json:"user_opd"`
-	ValidatorPemda     UserPemda  `gorm:"foreignKey:IDValidatorPemda" json:"validator_pemda"`
+
+	// Relasi
+	UserOPD        UserOPD   `gorm:"foreignKey:UserOPDID" json:"user_opd"`
+	ValidatorPemda UserPemda `gorm:"foreignKey:IDValidatorPemda" json:"validator_pemda"`
 }
 
-// LayananInformasiPengaduan merepresentasikan layanan informasi publik dan pengaduan.
+// LayananAdministrasi merepresentasikan entitas di tabel Layanan_Administrasi.
+type LayananAdministrasi struct {
+	ID                  uint       `gorm:"primaryKey" json:"id"`
+	UserOPDID           uint       `gorm:"not null" json:"user_opd_id"`
+	JudulKegiatan       string     `gorm:"not null" json:"judul_kegiatan"`
+	Deskripsi           string     `json:"deskripsi"`
+	NamaPemohon         string     `gorm:"not null" json:"nama_pemohon"`
+	NIPPemohon          *string    `json:"nip_pemohon"`
+	InstansiPemohon     string     `gorm:"not null" json:"instansi_pemohon"`
+	PeriodeMulai        *time.Time `json:"periode_mulai"`
+	PeriodeSelesai      *time.Time `json:"periode_selesai"`
+	BerkasPengajuanPath *string    `json:"berkas_pengajuan_path"`
+	StatusProses        string     `gorm:"not null;default:'Baru'" json:"status_proses"`
+	CreatedAt           time.Time  `json:"created_at"`
+
+	// Kolom Validasi
+	IDValidatorPemda   *uint      `json:"id_validator_pemda"`
+	StatusValidasi     string     `gorm:"not null;default:'Menunggu Validasi'" json:"status_validasi"`
+	KeteranganValidasi string     `json:"keterangan_validasi"`
+	TanggalValidasi    *time.Time `json:"tanggal_validasi"`
+
+	// Relasi
+	UserOPD        UserOPD   `gorm:"foreignKey:UserOPDID" json:"user_opd"`
+	ValidatorPemda UserPemda `gorm:"foreignKey:IDValidatorPemda" json:"validator_pemda"`
+}
+
+// LayananInformasiPengaduan merepresentasikan entitas di tabel Layanan_Informasi_Pengaduan.
 type LayananInformasiPengaduan struct {
 	ID                  uint       `gorm:"primaryKey" json:"id"`
-	UserOPDID           uint       `json:"user_opd_id"`
-	JenisPermintaan     string     `json:"jenis_permintaan"`
-	KodeRegistrasi      string     `gorm:"unique" json:"kode_registrasi"`
-	NamaPemohon         string     `json:"nama_pemohon"`
-	KontakPemohon       string     `json:"kontak_pemohon"`
-	DetailIsi           string     `json:"detail_isi"`
-	Status              string     `json:"status"`
-	CatatanTindakLanjut string     `json:"catatan_tindak_lanjut"`
+	UserOPDID           uint       `gorm:"not null" json:"user_opd_id"`
+	JudulKegiatan       string     `gorm:"not null" json:"judul_kegiatan"`
+	Deskripsi           string     `gorm:"not null" json:"deskripsi"`
+	NamaPemohon         string     `gorm:"not null" json:"nama_pemohon"`
+	NIPPemohon          *string    `json:"nip_pemohon"`
+	InstansiPemohon     string     `gorm:"not null" json:"instansi_pemohon"`
+	BerkasPengajuanPath *string    `json:"berkas_pengajuan_path"`
+	StatusProses        string     `gorm:"not null;default:'Baru'" json:"status_proses"`
 	CreatedAt           time.Time  `json:"created_at"`
-	IDValidatorPemda    *uint      `json:"id_validator_pemda"`
-	StatusValidasi      string     `gorm:"default:'Menunggu Validasi'" json:"status_validasi"`
-	KeteranganValidasi  string     `json:"keterangan_validasi"`
-	TanggalValidasi     *time.Time `json:"tanggal_validasi"`
-	UserOPD             UserOPD    `gorm:"foreignKey:UserOPDID" json:"user_opd"`
-	ValidatorPemda      UserPemda  `gorm:"foreignKey:IDValidatorPemda" json:"validator_pemda"`
-}
 
-// LayananAdministrasi merepresentasikan layanan administrasi seperti izin magang/penelitian.
-type LayananAdministrasi struct {
-	ID                 uint       `gorm:"primaryKey" json:"id"`
-	UserOPDID          uint       `json:"user_opd_id"`
-	JenisFasilitasi    string     `json:"jenis_fasilitasi"`
-	NamaPemohon        string     `json:"nama_pemohon"`
-	NamaInstansi       string     `json:"nama_instansi"`
-	JudulKegiatan      string     `json:"judul_kegiatan"`
-	SuratPengantarPath string     `json:"surat_pengantar_path"`
-	PeriodeMulai       time.Time  `json:"periode_mulai"`
-	PeriodeSelesai     time.Time  `json:"periode_selesai"`
-	StatusPermohonan   string     `json:"status_permohonan"`
-	CreatedAt          time.Time  `json:"created_at"`
+	// Kolom Validasi
 	IDValidatorPemda   *uint      `json:"id_validator_pemda"`
-	StatusValidasi     string     `gorm:"default:'Menunggu Validasi'" json:"status_validasi"`
+	StatusValidasi     string     `gorm:"not null;default:'Menunggu Validasi'" json:"status_validasi"`
 	KeteranganValidasi string     `json:"keterangan_validasi"`
 	TanggalValidasi    *time.Time `json:"tanggal_validasi"`
-	UserOPD            UserOPD    `gorm:"foreignKey:UserOPDID" json:"user_opd"`
-	ValidatorPemda     UserPemda  `gorm:"foreignKey:IDValidatorPemda" json:"validator_pemda"`
+
+	// Relasi
+	UserOPD        UserOPD   `gorm:"foreignKey:UserOPDID" json:"user_opd"`
+	ValidatorPemda UserPemda `gorm:"foreignKey:IDValidatorPemda" json:"validator_pemda"`
 }
 
-// ValidasiRequest adalah struct untuk request body saat validasi
+// ValidasiRequest tetap digunakan untuk body request saat validasi.
 type ValidasiRequest struct {
-	StatusValidasi     string `json:"status_validasi"`
+	StatusValidasi     string `json:"status_validasi" binding:"required"`
 	KeteranganValidasi string `json:"keterangan_validasi"`
 }

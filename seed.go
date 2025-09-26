@@ -1,196 +1,134 @@
 package main
 
 import (
-	"encoding/base64" // Import ini sekarang akan digunakan
+	"encoding/base64"
 	"fmt"
 	"time"
 
 	"golang.org/x/crypto/argon2"
 )
 
+// Seed akan mengisi database dengan data awal untuk keperluan development.
 func Seed() {
-	fmt.Println("===== SEEDING DATA =====")
+	fmt.Println("===== MEMULAI PROSES SEEDING DATA =====")
 
-	// SALT
-	saltOPD := []byte("salt-argon2-untuk-opd-123")
-	saltPemda := []byte("salt-argon2-untuk-pemda-456")
+	// ==================================================================
+	// LANGKAH 1: Buat Master Data OPD
+	// ==================================================================
+	fmt.Println("--> Seeding Master OPD...")
+	opdBappeda := OPD{
+		NamaOPD:   "Bappeda",
+		AlamatOPD: "Jl. Mastrip No. 1, Madiun",
+	}
+	DB.FirstOrCreate(&opdBappeda, OPD{NamaOPD: "Bappeda"})
 
-	// HASH PASSWORD
-	encodedHashOPD := base64.StdEncoding.EncodeToString(
-		argon2.IDKey([]byte("password123"), saltOPD, 1, 64*1024, 4, 32),
+	opdDisdik := OPD{
+		NamaOPD:   "Dinas Pendidikan",
+		AlamatOPD: "Jl. Pahlawan No. 25, Madiun",
+	}
+	DB.FirstOrCreate(&opdDisdik, OPD{NamaOPD: "Dinas Pendidikan"})
+
+	// ==================================================================
+	// LANGKAH 2: Buat Pengguna (Pemda & OPD)
+	// ==================================================================
+	fmt.Println("--> Seeding Pengguna (Pemda & OPD)...")
+
+	// Siapkan salt dan proses hashing dengan Argon2
+	saltOPD := []byte("salt-untuk-user-opd-yang-aman")
+	saltPemda := []byte("salt-untuk-user-pemda-yang-aman")
+	hashedPasswordOPD := base64.StdEncoding.EncodeToString(
+		argon2.IDKey([]byte("passwordopd"), saltOPD, 1, 64*1024, 4, 32),
 	)
-	encodedHashPemda := base64.StdEncoding.EncodeToString(
-		argon2.IDKey([]byte("password456"), saltPemda, 1, 64*1024, 4, 32),
+	hashedPasswordPemda := base64.StdEncoding.EncodeToString(
+		argon2.IDKey([]byte("passwordpemda"), saltPemda, 1, 64*1024, 4, 32),
 	)
 
-	// ================== USER ==================
-	userOPD := UserOPD{
-		Nama:     "Budi Staf",
-		Username: "budi.opd",
-		Password: encodedHashOPD,
-		NIP:      "199001012020121001",
+	// --- User Pemda (1) ---
+	userPemda := UserPemda{
+		Nama:     "Dr. Anisa Wijayanti",
+		Password: hashedPasswordPemda,
+		NIP:      "198505052015012002", // Digunakan untuk login
+		Jabatan:  "Kepala Bidang Verifikasi",
+	}
+	DB.FirstOrCreate(&userPemda, UserPemda{NIP: "198505052015012002"})
+
+	// --- User OPD (2) ---
+	userBappeda := UserOPD{
+		OPDID:    opdBappeda.ID,
+		Nama:     "Budi Santoso",
+		Password: hashedPasswordOPD,
+		NIP:      "199001012020121001", // Digunakan untuk login
 		Jabatan:  "Staf Perencanaan",
 	}
-	DB.FirstOrCreate(&userOPD, UserOPD{Username: "budi.opd"})
+	DB.FirstOrCreate(&userBappeda, UserOPD{NIP: "199001012020121001"})
 
-	userPemda := UserPemda{
-		Nama:     "Anisa Kepala",
-		Username: "anisa.pemda",
-		Password: encodedHashPemda,
-		NIP:      "198505052015012002",
-		Jabatan:  "Kepala Bidang Perencanaan",
+	userDisdik := UserOPD{
+		OPDID:    opdDisdik.ID,
+		Nama:     "Citra Lestari",
+		Password: hashedPasswordOPD,
+		NIP:      "199203152021012003", // Digunakan untuk login
+		Jabatan:  "Staf Kurikulum",
 	}
-	DB.FirstOrCreate(&userPemda, UserPemda{Username: "anisa.pemda"})
+	DB.FirstOrCreate(&userDisdik, UserOPD{NIP: "199203152021012003"})
 
-	userOpdID := userOPD.ID
-	userPemdaID := userPemda.ID
-	now := time.Now()
-	validatedAt := now.Add(-24 * time.Hour)
-	
-    // ... (sisa kode seeder untuk layanan) ...
-	// 2. Buat Data Dummy untuk Layanan Pembangunan (4 data)
-	// =======================================================
-	fmt.Println("Seeding Layanan Pembangunan...")
-	layanansPembangunan := []LayananPembangunan{
-		{ // Data Disetujui
-			UserOPDID:          userOpdID,
-			JenisLayanan:       "Perencanaan Pembangunan Daerah",
-			JudulKegiatan:      "Asistensi Penyusunan Renstra Diskominfo 2025-2029",
-			Deskripsi:          "Memberikan pendampingan dalam penyusunan dokumen strategis untuk Diskominfo.",
-			Status:             "Selesai",
-			TanggalKegiatan:    now.AddDate(0, 0, -10),
-			Lokasi:             "Kantor Diskominfo",
-			StatusValidasi:     "Disetujui",
-			IDValidatorPemda:   &userPemdaID,
-			KeteranganValidasi: "Data sudah lengkap dan sesuai.",
-			TanggalValidasi:    &validatedAt,
-		},
-		{ // Data Ditolak
-			UserOPDID:          userOpdID,
-			JenisLayanan:       "Evaluasi Pembangunan Daerah",
-			JudulKegiatan:      "Laporan Evaluasi Kinerja Pembangunan Triwulan 3",
-			Deskripsi:          "Analisis capaian indikator makro dan program prioritas pada Triwulan 3.",
-			Status:             "Revisi",
-			TanggalKegiatan:    now.AddDate(0, 0, -5),
-			Lokasi:             "Internal Bappelitbangda",
-			StatusValidasi:     "Ditolak",
-			IDValidatorPemda:   &userPemdaID,
-			KeteranganValidasi: "Mohon revisi bagian capaian indikator. Data belum sinkron dengan laporan keuangan.",
-			TanggalValidasi:    &validatedAt,
-		},
-		{ // Data Menunggu Validasi
-			UserOPDID:       userOpdID,
-			JenisLayanan:    "Penelitian dan Pengembangan",
-			JudulKegiatan:   "Kajian Potensi Ekonomi Kreatif di Kota Madiun",
-			Deskripsi:       "Proposal untuk melakukan penelitian mendalam mengenai subsektor ekonomi kreatif yang potensial.",
-			Status:          "Diajukan",
-			TanggalKegiatan: now,
-			Lokasi:          "Wilayah Kota Madiun",
-			StatusValidasi:  "Menunggu Validasi", // Default
-		},
-		{ // Data Disetujui Lainnya
-			UserOPDID:          userOpdID,
-			JenisLayanan:       "Data dan Informasi Pembangunan",
-			JudulKegiatan:      "Permintaan Data Laju Pertumbuhan Ekonomi 5 Tahun Terakhir",
-			Deskripsi:          "Data LPE diminta oleh BPS untuk keperluan survei nasional.",
-			Status:             "Selesai",
-			TanggalKegiatan:    now.AddDate(0, 0, -20),
-			Lokasi:             "Internal Bappelitbangda",
-			StatusValidasi:     "Disetujui",
-			IDValidatorPemda:   &userPemdaID,
-			KeteranganValidasi: "Data disetujui untuk diberikan.",
-			TanggalValidasi:    &validatedAt,
-		},
+	// ==================================================================
+	// LANGKAH 3: Buat Data Layanan Dummy (10 per jenis layanan)
+	// ==================================================================
+	validatedAt := time.Now().Add(-48 * time.Hour)
+
+	// --- 10 Data Layanan Pembangunan ---
+	fmt.Println("--> Seeding 10 data Layanan Pembangunan...")
+	pembangunans := []LayananPembangunan{
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Kajian Awal Pembangunan Ruang Terbuka Hijau", Deskripsi: "Analisis kelayakan untuk taman kota baru di Kecamatan Taman.", InstansiPemohon: "Internal Bappeda", NamaPemohon: userBappeda.Nama, StatusValidasi: "Disetujui", KeteranganValidasi: "Data lengkap.", IDValidatorPemda: &userPemda.ID, TanggalValidasi: &validatedAt},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Rencana Rehabilitasi Gedung SDN 01 Kartoharjo", Deskripsi: "Pengajuan anggaran untuk perbaikan atap dan fasilitas toilet sekolah.", InstansiPemohon: "Internal Disdik", NamaPemohon: userDisdik.Nama, StatusValidasi: "Disetujui", KeteranganValidasi: "Sudah sesuai RAB.", IDValidatorPemda: &userPemda.ID, TanggalValidasi: &validatedAt},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Proposal Sistem Drainase Perkotaan", Deskripsi: "Pengajuan proposal untuk perbaikan sistem drainase di area rawan banjir.", InstansiPemohon: "Internal Bappeda", NamaPemohon: userBappeda.Nama, StatusValidasi: "Ditolak", KeteranganValidasi: "Lampiran teknis tidak ada.", IDValidatorPemda: &userPemda.ID, TanggalValidasi: &validatedAt},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Pengadaan Komputer untuk Laboratorium SMPN 2", Deskripsi: "Proposal pengadaan 40 unit komputer untuk meningkatkan fasilitas belajar.", InstansiPemohon: "Internal Disdik", NamaPemohon: userDisdik.Nama, StatusValidasi: "Menunggu Validasi"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Studi Kelayakan Flyover Jalan Pahlawan", Deskripsi: "Mengkaji urgensi pembangunan flyover untuk mengurangi kemacetan.", InstansiPemohon: "Dinas PUPR", NamaPemohon: "Dr. Ir. Haryanto"},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Pembangunan Perpustakaan Digital Kota", Deskripsi: "Mengajukan konsep dan anggaran untuk perpustakaan modern berbasis teknologi.", InstansiPemohon: "Internal Disdik", NamaPemohon: userDisdik.Nama},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Program Bedah Rumah Warga Kurang Mampu 2025", Deskripsi: "Perencanaan dan pendataan calon penerima bantuan renovasi rumah.", InstansiPemohon: "Dinas Sosial", NamaPemohon: "Siti Aminah, S.Sos"},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Renovasi Lapangan Olahraga SMAN 3 Madiun", Deskripsi: "Perbaikan lapangan basket dan futsal beserta tribun penonton.", InstansiPemohon: "Internal Disdik", NamaPemohon: userDisdik.Nama},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Analisis Dampak Lingkungan (AMDAL) Pasar Besar", Deskripsi: "Studi AMDAL untuk rencana revitalisasi Pasar Besar Madiun.", InstansiPemohon: "DLH", NamaPemohon: "Ir. Endang P."},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Penambahan Ruang Kelas Baru (RKB) di SLB Kartini", Deskripsi: "Proposal penambahan 2 ruang kelas untuk siswa berkebutuhan khusus.", InstansiPemohon: "Internal Disdik", NamaPemohon: userDisdik.Nama},
 	}
-	for _, layanan := range layanansPembangunan {
-		DB.FirstOrCreate(&layanan, "judul_kegiatan = ?", layanan.JudulKegiatan)
+	for _, l := range pembangunans {
+		DB.FirstOrCreate(&l, LayananPembangunan{JudulKegiatan: l.JudulKegiatan})
 	}
 
-	// 3. Buat Data Dummy untuk Layanan Administrasi (3 data)
-	// ======================================================
-	fmt.Println("Seeding Layanan Administrasi...")
-	layanansAdministrasi := []LayananAdministrasi{
-		{ // Data Disetujui
-			UserOPDID:          userOpdID,
-			JenisFasilitasi:    "Magang",
-			NamaPemohon:        "Rendi Pratama",
-			NamaInstansi:       "UNIPMA Madiun",
-			JudulKegiatan:      "Praktik Kerja Lapangan di Bidang Perencanaan",
-			StatusPermohonan:   "Diterima",
-			StatusValidasi:     "Disetujui",
-			IDValidatorPemda:   &userPemdaID,
-			KeteranganValidasi: "Ditempatkan di Bidang Perencanaan, mulai tanggal 1 Oktober 2025.",
-			TanggalValidasi:    &validatedAt,
-		},
-		{ // Data Ditolak
-			UserOPDID:          userOpdID,
-			JenisFasilitasi:    "Izin Penelitian",
-			NamaPemohon:        "Sarah Amelia",
-			NamaInstansi:       "UGM Yogyakarta",
-			JudulKegiatan:      "Analisis Dampak Sosial Pembangunan Mall",
-			StatusPermohonan:   "Ditolak",
-			StatusValidasi:     "Ditolak",
-			IDValidatorPemda:   &userPemdaID,
-			KeteranganValidasi: "Topik penelitian tidak relevan dengan prioritas pembangunan daerah saat ini.",
-			TanggalValidasi:    &validatedAt,
-		},
-		{ // Data Menunggu Validasi
-			UserOPDID:        userOpdID,
-			JenisFasilitasi:  "Permohonan Narasumber",
-			NamaPemohon:      "HIMA PWK ITS",
-			NamaInstansi:     "ITS Surabaya",
-			JudulKegiatan:    "Webinar Nasional 'Smart City Planning'",
-			StatusPermohonan: "Diajukan",
-			StatusValidasi:   "Menunggu Validasi",
-		},
+	// --- 10 Data Layanan Administrasi ---
+	fmt.Println("--> Seeding 10 data Layanan Administrasi...")
+	administrasis := []LayananAdministrasi{
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Izin Penelitian Mahasiswa S2 ITB", Deskripsi: "Penelitian mengenai dampak ekonomi digital terhadap UMKM di Madiun.", InstansiPemohon: "Institut Teknologi Bandung", NamaPemohon: "Ahmad Zulkifli", StatusValidasi: "Disetujui", KeteranganValidasi: "Surat dari kampus lengkap.", IDValidatorPemda: &userPemda.ID, TanggalValidasi: &validatedAt},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Permohonan Narasumber untuk Seminar Guru", Deskripsi: "Memohon Kepala Dinas sebagai pembicara utama dalam acara PGRI.", InstansiPemohon: "PGRI Kota Madiun", NamaPemohon: "Panitia Seminar", StatusValidasi: "Menunggu Validasi"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Fasilitasi Magang dari Universitas Merdeka", Deskripsi: "Permohonan magang untuk 3 mahasiswa di bidang perencanaan kota.", InstansiPemohon: "Universitas Merdeka Madiun", NamaPemohon: "Fakultas Teknik"},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Izin Studi Banding dari Kabupaten Ngawi", Deskripsi: "Kunjungan dari Dinas Pendidikan Ngawi untuk mempelajari Kurikulum Merdeka.", InstansiPemohon: "Dinas Pendidikan Ngawi", NamaPemohon: "Kabid Kurikulum Ngawi"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Permohonan Rekomendasi Beasiswa LPDP", Deskripsi: "Permohonan surat rekomendasi dari Kepala Bappeda untuk S3.", InstansiPemohon: "Pribadi", NamaPemohon: "Andi Pratama"},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Verifikasi Ijazah untuk Keperluan PNS", Deskripsi: "Legalisasi dan verifikasi ijazah atas nama Susi Susanti.", InstansiPemohon: "BKPSDM", NamaPemohon: "Susi Susanti"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Surat Keterangan Telah Melaksanakan Riset", Deskripsi: "Penerbitan surat keterangan untuk mahasiswa UGM.", InstansiPemohon: "Universitas Gadjah Mada", NamaPemohon: "Rina Hartati"},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Izin Penggunaan Aula untuk Lomba Cerdas Cermat", Deskripsi: "Peminjaman Aula Dinas Pendidikan untuk final LCC tingkat SMP.", InstansiPemohon: "MGMP IPA SMP", NamaPemohon: "Ketua Panitia"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Permohonan Data Spasial Wilayah Rawan Banjir", Deskripsi: "Data diminta oleh tim peneliti dari ITS Surabaya.", InstansiPemohon: "Institut Teknologi Sepuluh Nopember", NamaPemohon: "Dr. Bambang S."},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Pendaftaran Ulang Sekolah Swasta", Deskripsi: "Proses administrasi untuk pendaftaran ulang izin operasional Yayasan Pelita Harapan.", InstansiPemohon: "Yayasan Pelita Harapan", NamaPemohon: "Kepala Sekolah"},
 	}
-	for _, layanan := range layanansAdministrasi {
-		DB.FirstOrCreate(&layanan, "judul_kegiatan = ? AND nama_pemohon = ?", layanan.JudulKegiatan, layanan.NamaPemohon)
+	for _, l := range administrasis {
+		DB.FirstOrCreate(&l, LayananAdministrasi{JudulKegiatan: l.JudulKegiatan})
 	}
 
-	// 4. Buat Data Dummy untuk Layanan Informasi & Pengaduan (3 data)
-	// =================================================================
-	fmt.Println("Seeding Layanan Informasi & Pengaduan...")
-	layanansInfo := []LayananInformasiPengaduan{
-		{ // Data Disetujui
-			UserOPDID:          userOpdID,
-			JenisPermintaan:    "Informasi Publik",
-			KodeRegistrasi:     "INFO-2025-001",
-			NamaPemohon:        "Warga Madiun",
-			KontakPemohon:      "warga@email.com",
-			DetailIsi:          "Mohon data rincian anggaran Bappelitbangda TA 2025.",
-			Status:             "Telah Dibalas",
-			StatusValidasi:     "Disetujui",
-			IDValidatorPemda:   &userPemdaID,
-			KeteranganValidasi: "Jawaban sudah sesuai dengan ketentuan UU KIP.",
-			TanggalValidasi:    &validatedAt,
-		},
-		{ // Data Menunggu Validasi
-			UserOPDID:        userOpdID,
-			JenisPermintaan:  "Pengaduan",
-			KodeRegistrasi:   "PENG-2025-001",
-			NamaPemohon:      "Sarah Amelia",
-			KontakPemohon:    "sarah.a@email.com",
-			DetailIsi:        "Pengajuan izin penelitian saya belum ada kabar setelah 2 minggu, padahal sudah ditolak.",
-			Status:           "Diterima",
-			StatusValidasi:   "Menunggu Validasi",
-		},
-		{ // Data Ditolak
-			UserOPDID:          userOpdID,
-			JenisPermintaan:    "Informasi Publik",
-			KodeRegistrasi:     "INFO-2025-002",
-			NamaPemohon:        "Perusahaan Riset",
-			KontakPemohon:      "riset@corp.com",
-			DetailIsi:          "Meminta data mentah hasil survei kepuasan masyarakat.",
-			Status:             "Ditolak",
-			StatusValidasi:     "Ditolak",
-			IDValidatorPemda:   &userPemdaID,
-			KeteranganValidasi: "Data mentah termasuk informasi pribadi yang dikecualikan menurut UU KIP.",
-			TanggalValidasi:    &validatedAt,
-		},
+	// --- 10 Data Layanan Informasi & Pengaduan ---
+	fmt.Println("--> Seeding 10 data Layanan Informasi & Pengaduan...")
+	informasis := []LayananInformasiPengaduan{
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Permintaan Data PDRB 5 Tahun Terakhir", Deskripsi: "Data diminta oleh Bank Indonesia untuk laporan triwulanan.", InstansiPemohon: "Bank Indonesia", NamaPemohon: "BI Perwakilan Jatim", StatusValidasi: "Disetujui", KeteranganValidasi: "Data sudah dikirim via email.", IDValidatorPemda: &userPemda.ID, TanggalValidasi: &validatedAt},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Pengaduan Terkait Pungutan Liar di Sekolah X", Deskripsi: "Laporan dari wali murid mengenai adanya biaya tambahan yang tidak resmi.", InstansiPemohon: "Masyarakat", NamaPemohon: "Wali Murid (Anonim)", StatusValidasi: "Menunggu Validasi"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Keluhan Mengenai Lampu Jalan Mati di Jl. Serayu", Deskripsi: "Laporan warga RT 02 RW 05, lampu sudah mati selama 2 minggu.", InstansiPemohon: "Masyarakat", NamaPemohon: "Bapak Sutrisno"},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Permintaan Informasi PPDB Jalur Zonasi", Deskripsi: "Orang tua murid meminta penjelasan detail mengenai aturan zonasi PPDB 2025.", InstansiPemohon: "Masyarakat", NamaPemohon: "Ibu Indah"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Laporan Tumpukan Sampah di Dekat Jembatan Manguharjo", Deskripsi: "Sampah liar menumpuk dan menimbulkan bau tidak sedap.", InstansiPemohon: "Masyarakat", NamaPemohon: "Komunitas Peduli Sungai"},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Apresiasi atas Prestasi Siswa di Olimpiade Sains", Deskripsi: "Ucapan terima kasih dan apresiasi kepada Disdik atas dukungan kepada siswa berprestasi.", InstansiPemohon: "Masyarakat", NamaPemohon: "Forum Orang Tua Siswa"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Informasi Progres Pembangunan Taman Kota", Deskripsi: "Warga menanyakan kapan taman kota baru akan selesai dibangun.", InstansiPemohon: "Masyarakat", NamaPemohon: "Karang Taruna Kel. Taman"},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Pengaduan Kualitas Makanan Kantin Sekolah Y", Deskripsi: "Beberapa siswa mengeluh sakit perut setelah jajan di kantin sekolah.", InstansiPemohon: "Masyarakat", NamaPemohon: "Orang Tua Murid"},
+		{UserOPDID: userBappeda.ID, JudulKegiatan: "Permintaan Data Jumlah UMKM per Kecamatan", Deskripsi: "Data dibutuhkan untuk analisis potensi ekonomi oleh akademisi.", InstansiPemohon: "Universitas Widya Mandala", NamaPemohon: "Diana, S.E., M.M."},
+		{UserOPDID: userDisdik.ID, JudulKegiatan: "Saran Penambahan Ekstrakurikuler Robotik", Deskripsi: "Usulan dari komunitas teknologi agar sekolah negeri memfasilitasi ekskul robotik.", InstansiPemohon: "Komunitas Madiun Coder", NamaPemohon: "Ketua Komunitas"},
 	}
-	for _, layanan := range layanansInfo {
-		DB.FirstOrCreate(&layanan, "kode_registrasi = ?", layanan.KodeRegistrasi)
+	for _, l := range informasis {
+		DB.FirstOrCreate(&l, LayananInformasiPengaduan{JudulKegiatan: l.JudulKegiatan})
 	}
 
+	fmt.Println("===== PROSES SEEDING SELESAI =====")
 }

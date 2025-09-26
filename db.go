@@ -34,12 +34,13 @@ func InitDB() {
 	DB = db
 	fmt.Println("✅ Database connected")
 
-	err = DB.AutoMigrate(
+		err = DB.AutoMigrate(
+		&OPD{},
 		&UserOPD{},
 		&UserPemda{},
 		&LayananPembangunan{},
-		&LayananInformasiPengaduan{},
 		&LayananAdministrasi{},
+		&LayananInformasiPengaduan{},
 	)
 	if err != nil {
 		log.Fatal("❌ Migration failed: ", err)

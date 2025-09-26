@@ -31,26 +31,35 @@ func main() {
 	// Router
 	r := mux.NewRouter()
 
-	// --- Endpoints untuk Layanan Pembangunan ---
-	r.HandleFunc("/layanan-pembangunan", GetAllLayananPembangunan).Methods("GET")
-	r.HandleFunc("/layanan-pembangunan/{id:[0-9]+}", GetLayananPembangunanByID).Methods("GET")
-	r.HandleFunc("/layanan-pembangunan", CreateLayananPembangunan).Methods("POST")
-	r.HandleFunc("/layanan-pembangunan/{id:[0-9]+}", UpdateLayananPembangunan).Methods("PUT")
-	r.HandleFunc("/layanan-pembangunan/{id:[0-9]+}", DeleteLayananPembangunan).Methods("DELETE")
+	api := r.PathPrefix("/api").Subrouter()
 
-	// --- Endpoints untuk Layanan Administrasi ---
-	r.HandleFunc("/layanan-administrasi", GetAllLayananAdministrasi).Methods("GET")
-	r.HandleFunc("/layanan-administrasi/{id:[0-9]+}", GetLayananAdministrasiByID).Methods("GET")
-	r.HandleFunc("/layanan-administrasi", CreateLayananAdministrasi).Methods("POST")
-	r.HandleFunc("/layanan-administrasi/{id:[0-9]+}", UpdateLayananAdministrasi).Methods("PUT")
-	r.HandleFunc("/layanan-administrasi/{id:[0-9]+}", DeleteLayananAdministrasi).Methods("DELETE")
+	api.HandleFunc("/opd", CreateOPD).Methods("POST")
+    api.HandleFunc("/opd", GetAllOPD).Methods("GET")
 
-	// --- Endpoints untuk Layanan Informasi & Pengaduan ---
-	r.HandleFunc("/layanan-informasi-pengaduan", GetAllLayananInformasiPengaduan).Methods("GET")
-	r.HandleFunc("/layanan-informasi-pengaduan/{id:[0-9]+}", GetLayananInformasiPengaduanByID).Methods("GET")
-	r.HandleFunc("/layanan-informasi-pengaduan", CreateLayananInformasiPengaduan).Methods("POST")
-	r.HandleFunc("/layanan-informasi-pengaduan/{id:[0-9]+}", UpdateLayananInformasiPengaduan).Methods("PUT")
-	r.HandleFunc("/layanan-informasi-pengaduan/{id:[0-9]+}", DeleteLayananInformasiPengaduan).Methods("DELETE")
+	// ---- Routes untuk Registrasi User ----
+	api.HandleFunc("/register/opd", CreateUserOPD).Methods("POST")
+	api.HandleFunc("/register/pemda", CreateUserPemda).Methods("POST")
+
+	// ---- Routes untuk Layanan Pembangunan ----
+	api.HandleFunc("/layanan/pembangunan", CreateLayananPembangunan).Methods("POST")
+	api.HandleFunc("/layanan/pembangunan", GetAllLayananPembangunan).Methods("GET")
+	api.HandleFunc("/layanan/pembangunan/{id}", GetLayananPembangunanByID).Methods("GET")
+	api.HandleFunc("/layanan/pembangunan/{id}", UpdateLayananPembangunan).Methods("PUT")
+	api.HandleFunc("/layanan/pembangunan/{id}/validate", ValidateLayananPembangunan).Methods("POST")
+
+	// ---- Routes untuk Layanan Administrasi ----
+	api.HandleFunc("/layanan/administrasi", CreateLayananAdministrasi).Methods("POST")
+	api.HandleFunc("/layanan/administrasi", GetAllLayananAdministrasi).Methods("GET")
+	api.HandleFunc("/layanan/administrasi/{id}", GetLayananAdministrasiByID).Methods("GET")
+	api.HandleFunc("/layanan/administrasi/{id}", UpdateLayananAdministrasi).Methods("PUT")
+	api.HandleFunc("/layanan/administrasi/{id}/validate", ValidateLayananAdministrasi).Methods("POST")
+
+	// ---- Routes untuk Layanan Informasi & Pengaduan ----
+	api.HandleFunc("/layanan/informasi", CreateLayananInformasi).Methods("POST")
+	api.HandleFunc("/layanan/informasi", GetAllLayananInformasi).Methods("GET")
+	api.HandleFunc("/layanan/informasi/{id}", GetLayananInformasiByID).Methods("GET")
+	api.HandleFunc("/layanan/informasi/{id}", UpdateLayananInformasi).Methods("PUT")
+	api.HandleFunc("/layanan/informasi/{id}/validate", ValidateLayananInformasi).Methods("POST")
 
 
 	// Middleware CORS
