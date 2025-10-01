@@ -1,416 +1,648 @@
 package main
 
 import (
-	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
-	"strconv"
+	"os"
 	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
-// ========= HELPER FUNCTIONS =========
+// ========= HANDLERS REGISTRASI PENGGUNA (OPD & PEMDA) =========
 
-func responseJSON(w http.ResponseWriter, status int, payload interface{}) {
-	response, err := json.Marshal(payload)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(err.Error()))
+func CreateUserOPD(c *gin.Context) {
+	var user UserOPD
+	if err := c.ShouldBindJSON(&user); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	w.Write(response)
+
+	// Di aplikasi nyata, HASHING PASSWORD WAJIB DILAKUKAN DI SINI!
+	// hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	// if err != nil { ... }
+	// user.Password = string(hashedPassword)
+
+	if err := DB.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Jangan pernah kirim password kembali ke client
+	user.Password = ""
+	c.JSON(http.StatusCreated, user)
 }
 
-func responseError(w http.ResponseWriter, code int, message string) {
-	responseJSON(w, code, map[string]string{"error": message})
+func CreateUserPemda(c *gin.Context) {
+	var user UserPemda
+	if err := c.ShouldBindJSON(&user); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
+		return
+	}
+
+	// HASHING PASSWORD WAJIB
+	if err := DB.Create(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	user.Password = ""
+	c.JSON(http.StatusCreated, user)
 }
 
 // ========= CRUD HANDLERS: OPD (KHUSUS SUPER ADMIN) =========
-
-// CreateOPD digunakan oleh Super Admin untuk mendaftarkan OPD baru ke sistem.
-func CreateOPD(w http.ResponseWriter, r *http.Request) {
+func CreateOPD(c *gin.Context) {
 	var opd OPD
-	if err := json.NewDecoder(r.Body).Decode(&opd); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
+	if err := c.ShouldBindJSON(&opd); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
 		return
 	}
 
 	if err := DB.Create(&opd).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	responseJSON(w, http.StatusCreated, opd)
+	c.JSON(http.StatusCreated, opd)
 }
-// GetAllOPD digunakan untuk mengambil daftar OPD, misalnya untuk dropdown form.
-func GetAllOPD(w http.ResponseWriter, r *http.Request) {
+
+func GetAllOPD(c *gin.Context) {
 	var opds []OPD
 	if err := DB.Find(&opds).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	responseJSON(w, http.StatusOK, opds)
+	c.JSON(http.StatusOK, opds)
 }
 
-// ========= HANDLERS REGISTRASI PENGGUNA (OPD & PEMDA) =========
+// ========= HELPER UNTUK AMBIL FILE & FORM VALUE =========
 
-// CreateUserOPD menangani registrasi user OPD. NIP digunakan sebagai pengganti username.
-func CreateUserOPD(w http.ResponseWriter, r *http.Request) {
-	var user UserOPD
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
-		return
+func bindLayananFromMultipartForm(c *gin.Context, layanan interface{}) error {
+	// Parsing form
+	if err := c.Request.ParseMultipartForm(10 << 20); err != nil { // 10 MB limit
+		return errors.New("Gagal parsing form: " + err.Error())
 	}
 
-	// Hashing password harus dilakukan di aplikasi nyata
-	// user.Password = hashPassword(user.Password)
-
-	if err := DB.Create(&user).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// Kosongkan password sebelum mengirim response
-	user.Password = ""
-	responseJSON(w, http.StatusCreated, user)
-}
-
-// CreateUserPemda menangani registrasi user Pemda. NIP digunakan sebagai pengganti username.
-func CreateUserPemda(w http.ResponseWriter, r *http.Request) {
-	var user UserPemda
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
-		return
+	// Handle file upload terlebih dahulu (jika ada)
+	var uploadedFilename *string
+	_, handler, err := c.Request.FormFile("berkas_pengajuan")
+	if err == nil { // Jika ada file yang diupload
+		os.MkdirAll("./uploads", os.ModePerm)
+		filePath := "./uploads/" + handler.Filename
+		if err := c.SaveUploadedFile(handler, filePath); err != nil {
+			return errors.New("Gagal menyimpan file: " + err.Error())
+		}
+		uploadedFilename = &handler.Filename
 	}
 
-	// Hashing password harus dilakukan di aplikasi nyata
-	// user.Password = hashPassword(user.Password)
+	// Binding data umum berdasarkan interface
+	switch v := layanan.(type) {
+	case *LayananPembangunan:
+		// HAPUS SEMUA LOGIKA user_opd_id DARI SINI
+		v.JudulKegiatan = c.PostForm("judul_kegiatan")
+		v.Deskripsi = c.PostForm("deskripsi")
+		v.NamaPemohon = c.PostForm("nama_pemohon")
+		v.InstansiPemohon = c.PostForm("instansi_pemohon")
+		if nip := c.PostForm("nip_pemohon"); nip != "" {
+			v.NIPPemohon = &nip
+		}
+		if mulai := c.PostForm("periode_mulai"); mulai != "" {
+			v.PeriodeMulai = &mulai
+		}
+		if selesai := c.PostForm("periode_selesai"); selesai != "" {
+			v.PeriodeSelesai = &selesai
+		}
+		v.BerkasPengajuanPath = uploadedFilename // Set path file
 
-	if err := DB.Create(&user).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
-		return
+	case *LayananAdministrasi:
+		// HAPUS SEMUA LOGIKA user_opd_id DARI SINI
+		v.JudulKegiatan = c.PostForm("judul_kegiatan")
+		v.Deskripsi = c.PostForm("deskripsi")
+		v.NamaPemohon = c.PostForm("nama_pemohon")
+		v.InstansiPemohon = c.PostForm("instansi_pemohon")
+		if nip := c.PostForm("nip_pemohon"); nip != "" {
+			v.NIPPemohon = &nip
+		}
+		if mulai := c.PostForm("periode_mulai"); mulai != "" {
+			v.PeriodeMulai = &mulai
+		}
+		if selesai := c.PostForm("periode_selesai"); selesai != "" {
+			v.PeriodeSelesai = &selesai
+		}
+		v.BerkasPengajuanPath = uploadedFilename // Set path file
+
+	case *LayananInformasiPengaduan:
+		// HAPUS SEMUA LOGIKA user_opd_id DARI SINI
+		v.JudulKegiatan = c.PostForm("judul_kegiatan")
+		v.Deskripsi = c.PostForm("deskripsi")
+		v.NamaPemohon = c.PostForm("nama_pemohon")
+		v.InstansiPemohon = c.PostForm("instansi_pemohon")
+		if nip := c.PostForm("nip_pemohon"); nip != "" {
+			v.NIPPemohon = &nip
+		}
+		v.BerkasPengajuanPath = uploadedFilename // Set path file
 	}
-	// Kosongkan password sebelum mengirim response
-	user.Password = ""
-	responseJSON(w, http.StatusCreated, user)
+
+	return nil
 }
 
 // ========= CRUD: LAYANAN PEMBANGUNAN =========
 
-func CreateLayananPembangunan(w http.ResponseWriter, r *http.Request) {
-	var layanan LayananPembangunan
-	if err := json.NewDecoder(r.Body).Decode(&layanan); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
+func CreateLayananPembangunan(c *gin.Context) {
+	// Ambil data user yang login dari context (sudah di-set oleh AuthMiddleware)
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+
+	// UserOPDID sekarang diambil dari token, bukan form. JAUH LEBIH AMAN.
+	var layanan = LayananPembangunan{
+		UserOPDID: claims.ID, 
+	}
+	
+	// Bind sisa data dari form ke struct 'layanan'
+	if err := bindLayananFromMultipartForm(c, &layanan); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// Simulasi: ID user didapat dari token otentikasi
-	userOPDIDFromToken := uint(1)
-	layanan.UserOPDID = userOPDIDFromToken
+
+	// Set nilai default saat pembuatan
+	layanan.StatusProses = "Baru"
+	layanan.StatusValidasi = "Menunggu Validasi"
+	layanan.CreatedAt = time.Now()
 
 	if err := DB.Create(&layanan).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan data: " + err.Error()})
 		return
 	}
-	DB.Preload("UserOPD.OPD").First(&layanan, layanan.ID)
-	responseJSON(w, http.StatusCreated, layanan)
+
+	c.JSON(http.StatusCreated, layanan)
 }
 
-func GetAllLayananPembangunan(w http.ResponseWriter, r *http.Request) {
+func GetAllLayananPembangunan(c *gin.Context) {
+	 log.Println("--- 1. MASUK KE HANDLER GetAllLayananPembangunan ---")
+
+    var layanans []LayananPembangunan
+    log.Println("--- 2. Variabel 'layanans' berhasil dibuat ---")
+
+    // Kita coba query TANPA Preload dulu untuk menyederhanakan
+    tx := DB.Find(&layanans)
+    log.Println("--- 3. Perintah DB.Find sudah dieksekusi ---")
+
+    if tx.Error != nil {
+        log.Println("!!! ERROR SAAT QUERY DATABASE:", tx.Error.Error())
+        c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
+        return
+    }
+
+    log.Println("--- 4. Query database BERHASIL. Jumlah data:", tx.RowsAffected, "---")
+
+    c.JSON(http.StatusOK, layanans)
+    log.Println("--- 5. Response JSON berhasil dikirim ---")
+}
+
+func GetLayananPembangunanByID(c *gin.Context) {
+	layananID := c.Param("id")
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+
+	var layanan LayananPembangunan
+	if err := DB.First(&layanan, layananID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Data layanan tidak ditemukan"})
+		return
+	}
+
+	// Jika user adalah 'opd', cek apakah dia pemilik data ini
+	if claims.Role == "opd" && layanan.UserOPDID != claims.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak memiliki hak akses untuk melihat data ini"})
+		return
+	}
+
+	// Jika rolenya 'pemda' atau dia adalah pemilik, lanjutkan
+	DB.Preload("UserOPD.OPD").First(&layanan, layananID)
+	c.JSON(http.StatusOK, layanan)
+}
+
+func GetLayananPembangunanByUserOPD(c *gin.Context) {
+	userOpdID := c.Param("id")
 	var layanans []LayananPembangunan
-	query := DB.Preload("UserOPD.OPD").Preload("ValidatorPemda").Order("created_at desc")
-
-	if opdID := r.URL.Query().Get("opd_id"); opdID != "" {
-		query = query.Joins("JOIN user_opds ON user_opds.id = layanan_pembangunans.user_opd_id").
-			Where("user_opds.opd_id = ?", opdID)
-	}
-
-	if err := query.Find(&layanans).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	responseJSON(w, http.StatusOK, layanans)
-}
-
-func GetLayananPembangunanByID(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	var layanan LayananPembangunan
-	err := DB.Preload("UserOPD.OPD").Preload("ValidatorPemda").First(&layanan, id).Error
+	
+	err := DB.Where("user_opd_id = ?", userOpdID).Preload("UserOPD.OPD").Find(&layanans).Error
 	if err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Pembangunan tidak ditemukan")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	responseJSON(w, http.StatusOK, layanan)
+
+	c.JSON(http.StatusOK, layanans)
 }
 
-func UpdateLayananPembangunan(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
+func UpdateLayananPembangunan(c *gin.Context) {
+	id := c.Param("id")
 	var layanan LayananPembangunan
+
 	if err := DB.First(&layanan, id).Error; err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Pembangunan tidak ditemukan")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Data tidak ditemukan"})
 		return
 	}
 
-	// Cek otorisasi & status
-	userOPDIDFromToken := uint(1) // Simulasi dari token
-	if layanan.UserOPDID != userOPDIDFromToken {
-		responseError(w, http.StatusForbidden, "Akses ditolak")
+	// Bind data dari form ke struct yang sudah ada
+	if err := bindLayananFromMultipartForm(c, &layanan); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if layanan.StatusValidasi == "Disetujui" {
-		responseError(w, http.StatusBadRequest, "Data yang sudah disetujui tidak dapat diubah")
+	
+	if err := DB.Save(&layanan).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui data"})
 		return
 	}
 
-	var input LayananPembangunan
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
-		return
-	}
-	DB.Model(&layanan).Updates(input)
-	responseJSON(w, http.StatusOK, layanan)
+	c.JSON(http.StatusOK, layanan)
 }
 
-func ValidateLayananPembangunan(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
+func DeleteLayananPembangunan(c *gin.Context) {
+	id := c.Param("id")
+	if err := DB.Delete(&LayananPembangunan{}, id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus data"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Data berhasil dihapus"})
+}
+
+func ValidateLayananPembangunan(c *gin.Context) {
+	// 1. Ambil ID layanan dari parameter URL
+	id := c.Param("id")
+
+	// 2. Deklarasikan variabel 'layanan'
 	var layanan LayananPembangunan
+
+	// 3. Cari layanan di database
 	if err := DB.First(&layanan, id).Error; err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Pembangunan tidak ditemukan")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Layanan Pembangunan tidak ditemukan"})
 		return
 	}
 
+	// 4. Cek apakah sudah divalidasi sebelumnya
 	if layanan.StatusValidasi != "Menunggu Validasi" {
-		responseError(w, http.StatusBadRequest, "Layanan ini sudah divalidasi")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Layanan ini sudah divalidasi"})
 		return
 	}
 
+	// 5. Bind request body JSON
 	var req ValidasiRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
 		return
 	}
 
-	validatorIDFromToken := uint(1) // Simulasi dari token
+	// 6. Ambil data user 'pemda' yang sedang login dari context
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+
+	// 7. Siapkan data untuk update
+	validatorIDFromToken := claims.ID // Ambil ID dari token
 	now := time.Now()
 
+	// 8. Update field di struct 'layanan'
 	layanan.StatusValidasi = req.StatusValidasi
 	layanan.KeteranganValidasi = req.KeteranganValidasi
 	layanan.IDValidatorPemda = &validatorIDFromToken
 	layanan.TanggalValidasi = &now
 
+	// 9. Simpan perubahan ke database
 	DB.Save(&layanan)
+	
+	// 10. Ambil data terbaru dengan relasi untuk dikirim kembali
 	DB.Preload("ValidatorPemda").First(&layanan, layanan.ID)
-	responseJSON(w, http.StatusOK, layanan)
+	c.JSON(http.StatusOK, layanan)
 }
 
 // ========= CRUD: LAYANAN ADMINISTRASI =========
 
-func CreateLayananAdministrasi(w http.ResponseWriter, r *http.Request) {
-	var layanan LayananAdministrasi
-	if err := json.NewDecoder(r.Body).Decode(&layanan); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
+func CreateLayananAdministrasi(c *gin.Context) {
+	// Ambil data user yang login dari context (sudah di-set oleh AuthMiddleware)
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+
+	// UserOPDID sekarang diambil dari token, bukan form. JAUH LEBIH AMAN.
+	var layanan = LayananAdministrasi{
+		UserOPDID: claims.ID, 
+	}
+	
+	// Bind sisa data dari form ke struct 'layanan'
+	if err := bindLayananFromMultipartForm(c, &layanan); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	userOPDIDFromToken := uint(1)
-	layanan.UserOPDID = userOPDIDFromToken
+
+	// Set nilai default saat pembuatan
+	layanan.StatusProses = "Baru"
+	layanan.StatusValidasi = "Menunggu Validasi"
+	layanan.CreatedAt = time.Now()
 
 	if err := DB.Create(&layanan).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan data: " + err.Error()})
 		return
 	}
-	DB.Preload("UserOPD.OPD").First(&layanan, layanan.ID)
-	responseJSON(w, http.StatusCreated, layanan)
+
+	c.JSON(http.StatusCreated, layanan)
 }
 
-func GetAllLayananAdministrasi(w http.ResponseWriter, r *http.Request) {
+func GetAllLayananAdministrasi(c *gin.Context) {
+	 log.Println("--- 1. MASUK KE HANDLER GetAllLayananAdministrasi ---")
+
+    var layanans []LayananAdministrasi
+    log.Println("--- 2. Variabel 'layanans' berhasil dibuat ---")
+
+    // Kita coba query TANPA Preload dulu untuk menyederhanakan
+    tx := DB.Find(&layanans)
+    log.Println("--- 3. Perintah DB.Find sudah dieksekusi ---")
+
+    if tx.Error != nil {
+        log.Println("!!! ERROR SAAT QUERY DATABASE:", tx.Error.Error())
+        c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
+        return
+    }
+
+    log.Println("--- 4. Query database BERHASIL. Jumlah data:", tx.RowsAffected, "---")
+
+    c.JSON(http.StatusOK, layanans)
+    log.Println("--- 5. Response JSON berhasil dikirim ---")
+}
+
+func GetLayananAdministrasiByID(c *gin.Context) {
+	layananID := c.Param("id")
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+
+	var layanan LayananAdministrasi
+	if err := DB.First(&layanan, layananID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Data layanan tidak ditemukan"})
+		return
+	}
+
+	// Jika user adalah 'opd', cek apakah dia pemilik data ini
+	if claims.Role == "opd" && layanan.UserOPDID != claims.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak memiliki hak akses untuk melihat data ini"})
+		return
+	}
+
+	// Jika rolenya 'pemda' atau dia adalah pemilik, lanjutkan
+	DB.Preload("UserOPD.OPD").First(&layanan, layananID)
+	c.JSON(http.StatusOK, layanan)
+}
+
+func GetLayananAdministrasiByUserOPD(c *gin.Context) {
+	userOpdID := c.Param("id")
 	var layanans []LayananAdministrasi
-	query := DB.Preload("UserOPD.OPD").Preload("ValidatorPemda").Order("created_at desc")
-
-	if opdID := r.URL.Query().Get("opd_id"); opdID != "" {
-		query = query.Joins("JOIN user_opds ON user_opds.id = layanan_administrasis.user_opd_id").
-			Where("user_opds.opd_id = ?", opdID)
-	}
-
-	if err := query.Find(&layanans).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	responseJSON(w, http.StatusOK, layanans)
-}
-
-func GetLayananAdministrasiByID(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	var layanan LayananAdministrasi
-	err := DB.Preload("UserOPD.OPD").Preload("ValidatorPemda").First(&layanan, id).Error
+	
+	err := DB.Where("user_opd_id = ?", userOpdID).Preload("UserOPD.OPD").Find(&layanans).Error
 	if err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Administrasi tidak ditemukan")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	responseJSON(w, http.StatusOK, layanan)
+
+	c.JSON(http.StatusOK, layanans)
 }
 
-func UpdateLayananAdministrasi(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
+func UpdateLayananAdministrasi(c *gin.Context) {
+	id := c.Param("id")
 	var layanan LayananAdministrasi
+
 	if err := DB.First(&layanan, id).Error; err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Administrasi tidak ditemukan")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Data tidak ditemukan"})
 		return
 	}
 
-	userOPDIDFromToken := uint(1)
-	if layanan.UserOPDID != userOPDIDFromToken {
-		responseError(w, http.StatusForbidden, "Akses ditolak")
+	// Bind data dari form ke struct yang sudah ada
+	if err := bindLayananFromMultipartForm(c, &layanan); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if layanan.StatusValidasi == "Disetujui" {
-		responseError(w, http.StatusBadRequest, "Data yang sudah disetujui tidak dapat diubah")
+	
+	if err := DB.Save(&layanan).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui data"})
 		return
 	}
 
-	var input LayananAdministrasi
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
-		return
-	}
-	DB.Model(&layanan).Updates(input)
-	responseJSON(w, http.StatusOK, layanan)
+	c.JSON(http.StatusOK, layanan)
 }
 
-func ValidateLayananAdministrasi(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
+func DeleteLayananAdministrasi(c *gin.Context) {
+	id := c.Param("id")
+	if err := DB.Delete(&LayananAdministrasi{}, id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus data"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Data berhasil dihapus"})
+}
+
+func ValidateLayananAdministrasi(c *gin.Context) {
+	// 1. Ambil ID layanan dari parameter URL
+	id := c.Param("id")
+
+	// 2. Deklarasikan variabel 'layanan'
 	var layanan LayananAdministrasi
+
+	// 3. Cari layanan di database
 	if err := DB.First(&layanan, id).Error; err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Administrasi tidak ditemukan")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Layanan Pembangunan tidak ditemukan"})
 		return
 	}
 
+	// 4. Cek apakah sudah divalidasi sebelumnya
 	if layanan.StatusValidasi != "Menunggu Validasi" {
-		responseError(w, http.StatusBadRequest, "Layanan ini sudah divalidasi")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Layanan ini sudah divalidasi"})
 		return
 	}
 
+	// 5. Bind request body JSON
 	var req ValidasiRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
 		return
 	}
 
-	validatorIDFromToken := uint(1)
+	// 6. Ambil data user 'pemda' yang sedang login dari context
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+
+	// 7. Siapkan data untuk update
+	validatorIDFromToken := claims.ID // Ambil ID dari token
 	now := time.Now()
 
+	// 8. Update field di struct 'layanan'
 	layanan.StatusValidasi = req.StatusValidasi
 	layanan.KeteranganValidasi = req.KeteranganValidasi
 	layanan.IDValidatorPemda = &validatorIDFromToken
 	layanan.TanggalValidasi = &now
 
+	// 9. Simpan perubahan ke database
 	DB.Save(&layanan)
+	
+	// 10. Ambil data terbaru dengan relasi untuk dikirim kembali
 	DB.Preload("ValidatorPemda").First(&layanan, layanan.ID)
-	responseJSON(w, http.StatusOK, layanan)
+	c.JSON(http.StatusOK, layanan)
 }
-
 // ========= CRUD: LAYANAN INFORMASI & PENGADUAN =========
 
-func CreateLayananInformasi(w http.ResponseWriter, r *http.Request) {
-	var layanan LayananInformasiPengaduan
-	if err := json.NewDecoder(r.Body).Decode(&layanan); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
+func CreateLayananInformasiPengaduan(c *gin.Context) {
+// Ambil data user yang login dari context (sudah di-set oleh AuthMiddleware)
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+
+	// UserOPDID sekarang diambil dari token, bukan form. JAUH LEBIH AMAN.
+	var layanan = LayananInformasiPengaduan{
+		UserOPDID: claims.ID, 
+	}
+	
+	// Bind sisa data dari form ke struct 'layanan'
+	if err := bindLayananFromMultipartForm(c, &layanan); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	userOPDIDFromToken := uint(1)
-	layanan.UserOPDID = userOPDIDFromToken
+
+	// Set nilai default saat pembuatan
+	layanan.StatusProses = "Baru"
+	layanan.StatusValidasi = "Menunggu Validasi"
+	layanan.CreatedAt = time.Now()
 
 	if err := DB.Create(&layanan).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan data: " + err.Error()})
 		return
 	}
-	DB.Preload("UserOPD.OPD").First(&layanan, layanan.ID)
-	responseJSON(w, http.StatusCreated, layanan)
+
+	c.JSON(http.StatusCreated, layanan)
 }
 
-func GetAllLayananInformasi(w http.ResponseWriter, r *http.Request) {
+func GetAllLayananInformasiPengaduan(c *gin.Context) {
+ log.Println("--- 1. MASUK KE HANDLER GetAllLayananInformasiPengaduan ---")
+
+    var layanans []LayananInformasiPengaduan
+    log.Println("--- 2. Variabel 'layanans' berhasil dibuat ---")
+
+    // Kita coba query TANPA Preload dulu untuk menyederhanakan
+    tx := DB.Find(&layanans)
+    log.Println("--- 3. Perintah DB.Find sudah dieksekusi ---")
+
+    if tx.Error != nil {
+        log.Println("!!! ERROR SAAT QUERY DATABASE:", tx.Error.Error())
+        c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
+        return
+    }
+
+    log.Println("--- 4. Query database BERHASIL. Jumlah data:", tx.RowsAffected, "---")
+
+    c.JSON(http.StatusOK, layanans)
+    log.Println("--- 5. Response JSON berhasil dikirim ---")
+}
+
+func GetLayananInformasiPengaduanByID(c *gin.Context) {
+	id := c.Param("id")
+	var layanan LayananInformasiPengaduan
+	
+	if err := DB.Preload("UserOPD.OPD").First(&layanan, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Data tidak ditemukan"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, layanan)
+}
+
+func GetLayananInformasiPengaduanByUserOPD(c *gin.Context) {
+	userOpdID := c.Param("id")
 	var layanans []LayananInformasiPengaduan
-	query := DB.Preload("UserOPD.OPD").Preload("ValidatorPemda").Order("created_at desc")
-
-	if opdID := r.URL.Query().Get("opd_id"); opdID != "" {
-		query = query.Joins("JOIN user_opds ON user_opds.id = layanan_informasi_pengaduans.user_opd_id").
-			Where("user_opds.opd_id = ?", opdID)
-	}
-
-	if err := query.Find(&layanans).Error; err != nil {
-		responseError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	responseJSON(w, http.StatusOK, layanans)
-}
-
-func GetLayananInformasiByID(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	var layanan LayananInformasiPengaduan
-	err := DB.Preload("UserOPD.OPD").Preload("ValidatorPemda").First(&layanan, id).Error
+	
+	err := DB.Where("user_opd_id = ?", userOpdID).Preload("UserOPD.OPD").Find(&layanans).Error
 	if err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Informasi & Pengaduan tidak ditemukan")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	responseJSON(w, http.StatusOK, layanan)
+
+	c.JSON(http.StatusOK, layanans)
 }
 
-func UpdateLayananInformasi(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
+func UpdateLayananInformasiPengaduan(c *gin.Context) {
+	id := c.Param("id")
 	var layanan LayananInformasiPengaduan
+
 	if err := DB.First(&layanan, id).Error; err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Informasi & Pengaduan tidak ditemukan")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Data tidak ditemukan"})
 		return
 	}
 
-	userOPDIDFromToken := uint(1)
-	if layanan.UserOPDID != userOPDIDFromToken {
-		responseError(w, http.StatusForbidden, "Akses ditolak")
+	// Bind data dari form ke struct yang sudah ada
+	if err := bindLayananFromMultipartForm(c, &layanan); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if layanan.StatusValidasi == "Disetujui" {
-		responseError(w, http.StatusBadRequest, "Data yang sudah disetujui tidak dapat diubah")
+	
+	if err := DB.Save(&layanan).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui data"})
 		return
 	}
 
-	var input LayananInformasiPengaduan
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
-		return
-	}
-	DB.Model(&layanan).Updates(input)
-	responseJSON(w, http.StatusOK, layanan)
+	c.JSON(http.StatusOK, layanan)
 }
 
-func ValidateLayananInformasi(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
+func DeleteLayananInformasiPengaduan(c *gin.Context) {
+	id := c.Param("id")
+	if err := DB.Delete(&LayananInformasiPengaduan{}, id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus data"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Data berhasil dihapus"})
+}
+
+func ValidateLayananInformasiPengaduan(c *gin.Context) {
+	// 1. Ambil ID layanan dari parameter URL
+	id := c.Param("id")
+
+	// 2. Deklarasikan variabel 'layanan'
 	var layanan LayananInformasiPengaduan
+
+	// 3. Cari layanan di database
 	if err := DB.First(&layanan, id).Error; err != nil {
-		responseError(w, http.StatusNotFound, "Layanan Informasi & Pengaduan tidak ditemukan")
+		c.JSON(http.StatusNotFound, gin.H{"error": "Layanan Pembangunan tidak ditemukan"})
 		return
 	}
 
+	// 4. Cek apakah sudah divalidasi sebelumnya
 	if layanan.StatusValidasi != "Menunggu Validasi" {
-		responseError(w, http.StatusBadRequest, "Layanan ini sudah divalidasi")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Layanan ini sudah divalidasi"})
 		return
 	}
 
+	// 5. Bind request body JSON
 	var req ValidasiRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		responseError(w, http.StatusBadRequest, "Request body tidak valid")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
 		return
 	}
 
-	validatorIDFromToken := uint(1)
+	// 6. Ambil data user 'pemda' yang sedang login dari context
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+
+	// 7. Siapkan data untuk update
+	validatorIDFromToken := claims.ID // Ambil ID dari token
 	now := time.Now()
 
+	// 8. Update field di struct 'layanan'
 	layanan.StatusValidasi = req.StatusValidasi
 	layanan.KeteranganValidasi = req.KeteranganValidasi
 	layanan.IDValidatorPemda = &validatorIDFromToken
 	layanan.TanggalValidasi = &now
 
+	// 9. Simpan perubahan ke database
 	DB.Save(&layanan)
+	
+	// 10. Ambil data terbaru dengan relasi untuk dikirim kembali
 	DB.Preload("ValidatorPemda").First(&layanan, layanan.ID)
-	responseJSON(w, http.StatusOK, layanan)
+	c.JSON(http.StatusOK, layanan)
 }
+
 
 //
 // CATATAN: Fungsi Delete sengaja tidak diimplementasikan untuk menjaga integritas data.

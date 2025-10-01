@@ -1,11 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"time"
+	"log"
 
-	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Seed akan mengisi database dengan data awal untuk keperluan development.
@@ -15,39 +15,30 @@ func Seed() {
 	// ==================================================================
 	// LANGKAH 1: Buat Master Data OPD
 	// ==================================================================
-	fmt.Println("--> Seeding Master OPD...")
-	opdBappeda := OPD{
-		NamaOPD:   "Bappeda",
-		AlamatOPD: "Jl. Mastrip No. 1, Madiun",
+	passwordOPD := "opd123"
+	hashedPasswordOPD, err := bcrypt.GenerateFromPassword([]byte(passwordOPD), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatalf("Gagal hash password OPD: %v", err)
 	}
-	DB.FirstOrCreate(&opdBappeda, OPD{NamaOPD: "Bappeda"})
 
-	opdDisdik := OPD{
-		NamaOPD:   "Dinas Pendidikan",
-		AlamatOPD: "Jl. Pahlawan No. 25, Madiun",
+	passwordPemda := "pemda123"
+	hashedPasswordPemda, err := bcrypt.GenerateFromPassword([]byte(passwordPemda), bcrypt.DefaultCost)
+	if err != nil {
+		log.Fatalf("Gagal hash password Pemda: %v", err)
 	}
+	
+	// --- OPD (2) ---
+	opdBappeda := OPD{NamaOPD: "BAPPEDA", AlamatOPD: "Jl. Pahlawan No. 1"}
+	DB.FirstOrCreate(&opdBappeda, OPD{NamaOPD: "BAPPEDA"})
+
+	opdDisdik := OPD{NamaOPD: "Dinas Pendidikan", AlamatOPD: "Jl. Pendidikan No. 2"}
 	DB.FirstOrCreate(&opdDisdik, OPD{NamaOPD: "Dinas Pendidikan"})
-
-	// ==================================================================
-	// LANGKAH 2: Buat Pengguna (Pemda & OPD)
-	// ==================================================================
-	fmt.Println("--> Seeding Pengguna (Pemda & OPD)...")
-
-	// Siapkan salt dan proses hashing dengan Argon2
-	saltOPD := []byte("salt-untuk-user-opd-yang-aman")
-	saltPemda := []byte("salt-untuk-user-pemda-yang-aman")
-	hashedPasswordOPD := base64.StdEncoding.EncodeToString(
-		argon2.IDKey([]byte("passwordopd"), saltOPD, 1, 64*1024, 4, 32),
-	)
-	hashedPasswordPemda := base64.StdEncoding.EncodeToString(
-		argon2.IDKey([]byte("passwordpemda"), saltPemda, 1, 64*1024, 4, 32),
-	)
 
 	// --- User Pemda (1) ---
 	userPemda := UserPemda{
 		Nama:     "Dr. Anisa Wijayanti",
-		Password: hashedPasswordPemda,
-		NIP:      "198505052015012002", // Digunakan untuk login
+		Password: string(hashedPasswordPemda), // DIUBAH: Simpan hash bcrypt
+		NIP:      "198505052015012002",
 		Jabatan:  "Kepala Bidang Verifikasi",
 	}
 	DB.FirstOrCreate(&userPemda, UserPemda{NIP: "198505052015012002"})
@@ -56,8 +47,8 @@ func Seed() {
 	userBappeda := UserOPD{
 		OPDID:    opdBappeda.ID,
 		Nama:     "Budi Santoso",
-		Password: hashedPasswordOPD,
-		NIP:      "199001012020121001", // Digunakan untuk login
+		Password: string(hashedPasswordOPD), // DIUBAH: Simpan hash bcrypt
+		NIP:      "199001012020121001",
 		Jabatan:  "Staf Perencanaan",
 	}
 	DB.FirstOrCreate(&userBappeda, UserOPD{NIP: "199001012020121001"})
@@ -65,11 +56,13 @@ func Seed() {
 	userDisdik := UserOPD{
 		OPDID:    opdDisdik.ID,
 		Nama:     "Citra Lestari",
-		Password: hashedPasswordOPD,
-		NIP:      "199203152021012003", // Digunakan untuk login
+		Password: string(hashedPasswordOPD), // DIUBAH: Simpan hash bcrypt
+		NIP:      "199203152021012003",
 		Jabatan:  "Staf Kurikulum",
 	}
 	DB.FirstOrCreate(&userDisdik, UserOPD{NIP: "199203152021012003"})
+
+	log.Println("🌱 Seeding dengan password Bcrypt selesai!") // DIUBAH: Log message
 
 	// ==================================================================
 	// LANGKAH 3: Buat Data Layanan Dummy (10 per jenis layanan)
