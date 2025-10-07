@@ -36,11 +36,10 @@ func InitDB() {
 
 		err = DB.AutoMigrate(
 		&OPD{},
+		&JenisPelayanan{},
 		&UserOPD{},
 		&UserPemda{},
-		&LayananPembangunan{},
-		&LayananAdministrasi{},
-		&LayananInformasiPengaduan{},
+		&FormPengajuan{},
 	)
 	if err != nil {
 		log.Fatal("❌ Migration failed: ", err)

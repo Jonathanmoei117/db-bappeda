@@ -4,35 +4,35 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings" // <-- TAMBAHKAN IMPORT INI
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin" // Impor Gin
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Kunci rahasia untuk menandatangani token JWT.
-// SANGAT PENTING: Simpan ini di file .env Anda, jangan di hardcode!
+// jwtKey diambil dari environment variable untuk keamanan.
 var jwtKey = []byte(os.Getenv("JWT_SECRET_KEY"))
 
-// LoginRequest adalah struct untuk menampung data dari body request login.
+// LoginRequest merepresentasikan body JSON yang diharapkan saat login.
 type LoginRequest struct {
 	NIP      string `json:"nip" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
-// Claims adalah struct untuk data yang akan kita simpan di dalam token JWT.
+// Claims merepresentasikan data (payload) yang akan disimpan di dalam JWT.
 type Claims struct {
 	ID      uint   `json:"id"`
+	IDOPD   uint   `json:"id_opd"` // IDOPD disertakan untuk user dari OPD.
 	NIP     string `json:"nip"`
 	Nama    string `json:"nama"`
 	Jabatan string `json:"jabatan"`
-	Role    string `json:"role"` // 'opd' atau 'pemda'
+	Role    string `json:"role"`
 	jwt.RegisteredClaims
 }
 
-// LoginHandler menangani proses login untuk kedua role.
+// LoginHandler memproses permintaan login untuk UserOPD dan UserPemda.
 func LoginHandler(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -40,42 +40,41 @@ func LoginHandler(c *gin.Context) {
 		return
 	}
 
-	log.Println("--- [LOGIN ATTEMPT] Mencoba mencari NIP", req.NIP, "di tabel 'user_opd' ---")
+	// Coba cari pengguna di tabel user_opd terlebih dahulu.
 	var userOPD UserOPD
-	err := DB.Where("nip = ?", req.NIP).First(&userOPD).Error
-	if err == nil {
-		log.Println("--- [LOGIN INFO] User DITEMUKAN di 'user_opd'. Mencocokkan password... ---")
-		if err := bcrypt.CompareHashAndPassword([]byte(userOPD.Password), []byte(req.Password)); err == nil {
-			log.Println("--- [LOGIN SUCCESS] Password cocok untuk user OPD. Membuat token... ---")
-			generateTokenAndRespond(c, userOPD.ID, userOPD.NIP, userOPD.Nama, userOPD.Jabatan, "opd")
+	if err := DB.Where("nip = ?", req.NIP).First(&userOPD).Error; err == nil {
+		// User OPD ditemukan, verifikasi password.
+		if bcrypt.CompareHashAndPassword([]byte(userOPD.Password), []byte(req.Password)) == nil {
+			log.Println("[LOGIN SUCCESS] Role: OPD, Nama:", userOPD.Nama)
+			generateTokenAndRespond(c, userOPD.ID, userOPD.IDOPD, userOPD.NIP, userOPD.Nama, userOPD.Jabatan, "opd")
 			return
 		}
-		log.Println("--- [LOGIN FAILED] Password user OPD tidak cocok. ---")
 	}
 
-	log.Println("--- [LOGIN INFO] User TIDAK DITEMUKAN di 'user_opd'. Mencoba mencari di 'user_pemda'... ---")
+	// Jika tidak ditemukan atau password salah, coba cari di tabel user_pemda.
 	var userPemda UserPemda
-	err = DB.Where("nip = ?", req.NIP).First(&userPemda).Error
-	if err == nil {
-		log.Println("--- [LOGIN INFO] User DITEMUKAN di 'user_pemda'. Mencocokkan password... ---")
-		if err := bcrypt.CompareHashAndPassword([]byte(userPemda.Password), []byte(req.Password)); err == nil {
-			log.Println("--- [LOGIN SUCCESS] Password cocok untuk user Pemda. Membuat token... ---")
-			generateTokenAndRespond(c, userPemda.ID, userPemda.NIP, userPemda.Nama, userPemda.Jabatan, "pemda")
+	if err := DB.Where("nip = ?", req.NIP).First(&userPemda).Error; err == nil {
+		// User Pemda ditemukan, verifikasi password.
+		if bcrypt.CompareHashAndPassword([]byte(userPemda.Password), []byte(req.Password)) == nil {
+			log.Println("[LOGIN SUCCESS] Role: Pemda, Nama:", userPemda.Nama)
+			// IDOPD di-set 0 karena User Pemda tidak terikat pada satu OPD.
+			generateTokenAndRespond(c, userPemda.ID, 0, userPemda.NIP, userPemda.Nama, userPemda.Jabatan, "pemda")
 			return
 		}
-		log.Println("--- [LOGIN FAILED] Password user Pemda tidak cocok. ---")
 	}
 
-	log.Println("--- [LOGIN FAILED] User TIDAK DITEMUKAN di kedua tabel, atau password salah. ---")
+	// Jika setelah semua pengecekan pengguna tidak ditemukan atau password salah.
+	log.Println("[LOGIN FAILED] NIP:", req.NIP)
 	c.JSON(http.StatusUnauthorized, gin.H{"error": "NIP atau Password salah"})
 }
 
-// generateTokenAndRespond adalah helper untuk membuat JWT dan mengirimkannya sebagai respons.
-func generateTokenAndRespond(c *gin.Context, id uint, nip, nama, jabatan, role string) {
+// generateTokenAndRespond membuat JWT dan mengirimkannya sebagai respons JSON.
+func generateTokenAndRespond(c *gin.Context, id uint, idOPD uint, nip, nama, jabatan, role string) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 
 	claims := &Claims{
 		ID:      id,
+		IDOPD:   idOPD,
 		NIP:     nip,
 		Nama:    nama,
 		Jabatan: jabatan,
@@ -92,10 +91,12 @@ func generateTokenAndRespond(c *gin.Context, id uint, nip, nama, jabatan, role s
 		return
 	}
 
+	// Kirim respons ke client berisi token dan data user.
 	c.JSON(http.StatusOK, gin.H{
 		"token": tokenString,
 		"user": gin.H{
 			"id":      id,
+			"id_opd":  idOPD,
 			"nip":     nip,
 			"nama":    nama,
 			"jabatan": jabatan,
@@ -104,26 +105,21 @@ func generateTokenAndRespond(c *gin.Context, id uint, nip, nama, jabatan, role s
 	})
 }
 
-// =======================================================
-// TAMBAHKAN FUNGSI MIDDLEWARE DI SINI
-// =======================================================
+// AuthMiddleware adalah middleware untuk memverifikasi JWT dan hak akses (role).
 func AuthMiddleware(allowedRoles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Ambil token dari header Authorization
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header tidak ditemukan"})
 			return
 		}
 
-		// Header biasanya formatnya "Bearer {token}", kita buang "Bearer "-nya
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 		if tokenString == authHeader {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Format token tidak valid"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Format token tidak valid, harus 'Bearer <token>'"})
 			return
 		}
 
-		// 2. Validasi token
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
@@ -134,7 +130,7 @@ func AuthMiddleware(allowedRoles ...string) gin.HandlerFunc {
 			return
 		}
 
-		// 3. Cek apakah role user diizinkan
+		// Cek apakah role pengguna diizinkan mengakses endpoint ini.
 		isAllowed := false
 		for _, role := range allowedRoles {
 			if claims.Role == role {
@@ -148,7 +144,7 @@ func AuthMiddleware(allowedRoles ...string) gin.HandlerFunc {
 			return
 		}
 
-		// 4. Jika semua berhasil, simpan info user di context dan lanjutkan ke handler berikutnya
+		// Simpan data user dari token ke dalam context untuk digunakan di handler selanjutnya.
 		c.Set("user", claims)
 		c.Next()
 	}

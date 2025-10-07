@@ -16,7 +16,7 @@ func main() {
 	// Load .env
 	err := godotenv.Load(".env")
 	if err != nil {
-		log.Println("⚠️ No .env file found, using system env")
+		log.Println("⚠ No .env file found, using system env")
 	}
 
 	// Init DB + AutoMigrate
@@ -29,7 +29,7 @@ func main() {
 		return
 	}
 
-	// Router Gin. `gin.Default()` sudah termasuk logger dan recovery middleware.
+	// Router Gin. gin.Default() sudah termasuk logger dan recovery middleware.
 	r := gin.Default()
 
 	r.Use(cors.New(cors.Config{
@@ -51,95 +51,67 @@ func main() {
     // --- ROUTE PUBLIK (Tidak Perlu Login) ---
     // =======================================================
     api.POST("/login", LoginHandler)
-
+    // Rute GET /standar-pelayanan tetap publik agar semua user bisa melihat standar yang tersedia
+    api.GET("/standar-pelayanan", GetAllJenisPelayanan) // Tampilan publik / daftar master
 
     // =======================================================
-    // --- ROUTE KHUSUS ADMIN / SUPERUSER (jika ada) ---
-    // Di sini kita asumsikan 'pemda' juga bertindak sebagai admin
+    // --- ROUTE KHUSUS ADMIN / SUPERUSER (PEMDA) ---
     // =======================================================
     adminRoutes := api.Group("/")
     adminRoutes.Use(AuthMiddleware("pemda")) // Hanya pemda/admin yang boleh
     {
-        // Route untuk mengelola data master OPD
+        // 1. Route untuk mengelola data master OPD
         adminRoutes.POST("/opd", CreateOPD)
         adminRoutes.GET("/opd", GetAllOPD)
 
-        // Route untuk mendaftarkan user baru
+        // 2. Route untuk mendaftarkan user baru
         register := adminRoutes.Group("/register")
         {
             register.POST("/opd", CreateUserOPD)
             register.POST("/pemda", CreateUserPemda)
         }
     }
-
-
     // =======================================================
-    // --- ROUTE UNTUK PENGAJUAN OLEH OPD ---
+    // --- ROUTE KHUSUS OPD ---
     // =======================================================
     opdRoutes := api.Group("/")
-    opdRoutes.Use(AuthMiddleware("opd")) // Hanya OPD yang boleh
+    opdRoutes.Use(AuthMiddleware("opd")) 
     {
-        layananOPD := opdRoutes.Group("/layanan")
+        // 1. ROUTE MASTER: OPD membuat standar pelayanan mereka sendiri
+        opdRoutes.POST("/standar-pelayanan", CreateJenisPelayanan) // <-- PERUBAHAN UTAMA
+
+        // 2. ROUTE TRANSAKSI: Create/Update Form Pengajuan
+        pengajuanOPD := opdRoutes.Group("/pengajuan")
         {
-            // OPD hanya bisa membuat dan meng-update pengajuan
-            layananOPD.POST("/pembangunan", CreateLayananPembangunan)
-            layananOPD.PUT("/pembangunan/:id", UpdateLayananPembangunan)
+            pengajuanOPD.POST("/", CreateFormPengajuan)
+            pengajuanOPD.PUT("/:id", UpdateFormPengajuan)
+            pengajuanOPD.DELETE("/:id", DeleteFormPengajuan) 
             
-            layananOPD.POST("/administrasi", CreateLayananAdministrasi)
-            layananOPD.PUT("/administrasi/:id", UpdateLayananAdministrasi)
-
-            layananOPD.POST("/informasi", CreateLayananInformasiPengaduan)
-            layananOPD.PUT("/informasi/:id", UpdateLayananInformasiPengaduan)
+            // OPD melihat laporannya sendiri
+            opdRoutes.GET("/user/:id/pengajuan", GetFormPengajuanByUserOPD) 
         }
-        
-        // OPD hanya bisa melihat laporannya sendiri
-        opdRoutes.GET("/user-opd/:id/layanan/pembangunan", GetLayananPembangunanByUserOPD)
-        opdRoutes.GET("/user-opd/:id/layanan/administrasi", GetLayananAdministrasiByUserOPD)
-        opdRoutes.GET("/user-opd/:id/layanan/informasi", GetLayananInformasiPengaduanByUserOPD)
     }
-
-
     // =======================================================
     // --- ROUTE UNTUK PEMDA (Melihat & Validasi) ---
     // =======================================================
-    pemdaRoutes := api.Group("/")
+    pemdaRoutes := api.Group("/pengajuan")
     pemdaRoutes.Use(AuthMiddleware("pemda")) // Hanya Pemda yang boleh
     {
-        layananPemda := pemdaRoutes.Group("/layanan")
-        {
-            // Pemda bisa melihat semua data (GET all)
-            layananPemda.GET("/pembangunan", GetAllLayananPembangunan)
-            layananPemda.GET("/administrasi", GetAllLayananAdministrasi)
-            layananPemda.GET("/informasi", GetAllLayananInformasiPengaduan)
+        // Pemda bisa melihat semua data (GET all)
+        pemdaRoutes.GET("/", GetAllFormPengajuan) 
 
-            // Pemda bisa melakukan validasi
-            layananPemda.POST("/pembangunan/:id/validate", ValidateLayananPembangunan)
-            layananPemda.POST("/administrasi/:id/validate", ValidateLayananAdministrasi)
-            layananPemda.POST("/informasi/:id/validate", ValidateLayananInformasiPengaduan)
-        }
+        // Pemda bisa melakukan validasi
+        pemdaRoutes.POST("/:id/validate", ValidateFormPengajuan)
     }
-
-
     // =======================================================
-    // --- ROUTE YANG BISA DIAKSES KEDUA ROLE (Contoh: GetByID) ---
+    // --- ROUTE YANG BISA DIAKSES KEDUA ROLE (Get Detail) ---
     // =======================================================
-    sharedRoutes := api.Group("/")
+    sharedRoutes := api.Group("/pengajuan")
     sharedRoutes.Use(AuthMiddleware("opd", "pemda")) // OPD & Pemda boleh
     {
-        layananShared := sharedRoutes.Group("/layanan")
-        {
-            // Keduanya bisa lihat detail, keamanan kepemilikan sudah ada di dalam handler
-            layananShared.GET("/pembangunan/:id", GetLayananPembangunanByID)
-            layananShared.DELETE("/pembangunan/:id", DeleteLayananPembangunan)
-            
-            layananShared.GET("/administrasi/:id", GetLayananAdministrasiByID)
-            layananShared.DELETE("/administrasi/:id", DeleteLayananAdministrasi)
-            
-            layananShared.GET("/informasi/:id", GetLayananInformasiPengaduanByID)
-            layananShared.DELETE("/informasi/:id", DeleteLayananInformasiPengaduan)
-        }
+        // Keduanya bisa lihat detail
+        sharedRoutes.GET("/:id", GetFormPengajuanByID)
     }
-
 	// Middleware CORS
 	
 	// Start server
