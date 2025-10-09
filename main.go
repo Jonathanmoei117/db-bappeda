@@ -51,6 +51,9 @@ func main() {
     // --- ROUTE PUBLIK (Tidak Perlu Login) ---
     // =======================================================
     api.POST("/login", LoginHandler)
+    
+    api.POST("/logout", LogoutHandler)
+
     // Rute GET /standar-pelayanan tetap publik agar semua user bisa melihat standar yang tersedia
     api.GET("/standar-pelayanan", GetAllJenisPelayanan) // Tampilan publik / daftar master
 

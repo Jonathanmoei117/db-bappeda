@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
+	
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -42,11 +42,12 @@ func LoginHandler(c *gin.Context) {
 
 	// Coba cari pengguna di tabel user_opd terlebih dahulu.
 	var userOPD UserOPD
-	if err := DB.Where("nip = ?", req.NIP).First(&userOPD).Error; err == nil {
-		// User OPD ditemukan, verifikasi password.
+	// [DIUBAH] Gunakan Preload("OPD") untuk mengambil data OPD terkait secara otomatis
+	if err := DB.Preload("OPD").Where("nip = ?", req.NIP).First(&userOPD).Error; err == nil {
 		if bcrypt.CompareHashAndPassword([]byte(userOPD.Password), []byte(req.Password)) == nil {
-			log.Println("[LOGIN SUCCESS] Role: OPD, Nama:", userOPD.Nama)
-			generateTokenAndRespond(c, userOPD.ID, userOPD.IDOPD, userOPD.NIP, userOPD.Nama, userOPD.Jabatan, "opd")
+			log.Println("[LOGIN SUCCESS] Role: OPD, Nama:", userOPD.Nama, ", OPD:", userOPD.OPD.NamaOPD)
+			// Kirim nama OPD ke fungsi generateToken
+			generateTokenAndRespond(c, userOPD.ID, userOPD.IDOPD, userOPD.NIP, userOPD.Nama, userOPD.Jabatan, "opd", userOPD.OPD.NamaOPD)
 			return
 		}
 	}
@@ -54,11 +55,10 @@ func LoginHandler(c *gin.Context) {
 	// Jika tidak ditemukan atau password salah, coba cari di tabel user_pemda.
 	var userPemda UserPemda
 	if err := DB.Where("nip = ?", req.NIP).First(&userPemda).Error; err == nil {
-		// User Pemda ditemukan, verifikasi password.
 		if bcrypt.CompareHashAndPassword([]byte(userPemda.Password), []byte(req.Password)) == nil {
 			log.Println("[LOGIN SUCCESS] Role: Pemda, Nama:", userPemda.Nama)
-			// IDOPD di-set 0 karena User Pemda tidak terikat pada satu OPD.
-			generateTokenAndRespond(c, userPemda.ID, 0, userPemda.NIP, userPemda.Nama, userPemda.Jabatan, "pemda")
+			// Untuk Pemda, nama OPD bisa string kosong
+			generateTokenAndRespond(c, userPemda.ID, 0, userPemda.NIP, userPemda.Nama, userPemda.Jabatan, "pemda", "Pemerintah Daerah")
 			return
 		}
 	}
@@ -68,8 +68,34 @@ func LoginHandler(c *gin.Context) {
 	c.JSON(http.StatusUnauthorized, gin.H{"error": "NIP atau Password salah"})
 }
 
+func LogoutHandler(c *gin.Context) {
+	// Atur cookie opd_token dengan MaxAge negatif untuk menghapusnya
+	c.SetCookie(
+		"opd_token",
+		"",
+		-1, // MaxAge = -1 akan langsung menghapus cookie
+		"/",
+		"localhost",
+		false, // false untuk HTTP di development
+		true,  // httpOnly
+	)
+
+	// Atur juga cookie pemda_token untuk memastikan semua bersih
+	c.SetCookie(
+		"pemda_token",
+		"",
+		-1,
+		"/",
+		"localhost",
+		false,
+		true,
+	)
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Logout berhasil"})
+}
+
 // generateTokenAndRespond membuat JWT dan mengirimkannya sebagai respons JSON.
-func generateTokenAndRespond(c *gin.Context, id uint, idOPD uint, nip, nama, jabatan, role string) {
+func generateTokenAndRespond(c *gin.Context, id uint, idOPD uint, nip, nama, jabatan, role string,opdName string) {
 	expirationTime := time.Now().Add(24 * time.Hour)
 
 	claims := &Claims{
@@ -87,13 +113,43 @@ func generateTokenAndRespond(c *gin.Context, id uint, idOPD uint, nip, nama, jab
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat token"})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "Gagal membuat token"})
 		return
 	}
 
-	// Kirim respons ke client berisi token dan data user.
+	// **[BARU]** Tentukan nama cookie dan path redirect berdasarkan role.
+	var cookieName string
+	var redirectPath string
+		domain := os.Getenv("APP_DOMAIN")
+		if domain == "" {
+			domain = "localhost"
+		}
+		isSecure := os.Getenv("GIN_MODE") == "release"
+	if role == "pemda" {
+		cookieName = "pemda_token"
+		redirectPath = "/pemda/dashboard"
+	} else { // Asumsi jika bukan pemda, pasti opd
+		cookieName = "opd_token"
+		redirectPath = "/opd/dashboard"
+	}
+
+	// **[BARU]** Set token sebagai HttpOnly cookie di browser client.
+	// Ini adalah langkah kunci untuk Next.js middleware.
+	c.SetCookie(
+		cookieName,
+		tokenString,
+		3600*24,      // maxAge
+		"/",          // path
+		domain,   // <-- Menjadi dinamis
+        isSecure,    // secure (false untuk development HTTP di localhost)
+		true,         // httpOnly
+	)
+
+	// **[BARU]** Kirim respons ke client berisi URL redirect dan data user.
+	// Kita tidak perlu lagi mengirim token di body JSON karena sudah ada di cookie.
 	c.JSON(http.StatusOK, gin.H{
-		"token": tokenString,
+		"success":  true,
+		"redirect": redirectPath, // Frontend akan menggunakan ini untuk navigasi
 		"user": gin.H{
 			"id":      id,
 			"id_opd":  idOPD,
@@ -101,6 +157,7 @@ func generateTokenAndRespond(c *gin.Context, id uint, idOPD uint, nip, nama, jab
 			"nama":    nama,
 			"jabatan": jabatan,
 			"role":    role,
+			"opd":     opdName, // <-- TAMBAHKAN NAMA OPD DI SINI
 		},
 	})
 }
@@ -108,18 +165,14 @@ func generateTokenAndRespond(c *gin.Context, id uint, idOPD uint, nip, nama, jab
 // AuthMiddleware adalah middleware untuk memverifikasi JWT dan hak akses (role).
 func AuthMiddleware(allowedRoles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header tidak ditemukan"})
-			return
-		}
-
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenString == authHeader {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Format token tidak valid, harus 'Bearer <token>'"})
-			return
-		}
-
+		  tokenString, err := c.Cookie("opd_token")
+        if err != nil {
+            tokenString, err = c.Cookie("pemda_token")
+            if err != nil {
+                c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token otentikasi tidak ditemukan di cookie"})
+                return
+            }
+        }
 		claims := &Claims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 			return jwtKey, nil
