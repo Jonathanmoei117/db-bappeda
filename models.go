@@ -34,11 +34,12 @@ type JenisPelayanan struct {
 	WaktuPelayanan     string    `gorm:"column:waktu_pelayanan;type:varchar(255)" json:"waktu_pelayanan"`
 	BiayaTarif         string    `gorm:"column:biaya_tarif;type:varchar(255)" json:"biaya_tarif"`
 	ProdukPelayanan    string    `gorm:"column:produk_pelayanan;type:varchar(255)" json:"produk_pelayanan"`
-	SaranaPrasarana    string    `gorm:"column:sarana_prasarana;type:text" json:"sarana_prasarana"`
+	Fasilitas          string    `gorm:"column:fasilitas;type:text" json:"fasilitas"` // DIUBAH
 	JaminanPelayanan   string    `gorm:"column:jaminan_pelayanan;type:text" json:"jaminan_pelayanan"`
 	JaminanKeselamatan string    `gorm:"column:jaminan_keselamatan;type:text" json:"jaminan_keselamatan"`
 	EvaluasiKinerja    string    `gorm:"column:evaluasi_kinerja;type:text" json:"evaluasi_kinerja"`
 	JumlahPelaksana    int       `gorm:"column:jumlah_pelaksana" json:"jumlah_pelaksana"`
+	JangkaWaktu        string    `gorm:"column:jangka_waktu;type:varchar(255)" json:"jangka_waktu"` // DITAMBAHKAN
 	CreatedAt          time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP" json:"created_at"`
 
 	// Relasi (sebagai Child dan Parent)
@@ -57,7 +58,7 @@ type UserOPD struct {
 	IDOPD     uint      `gorm:"column:id_opd;not null" json:"id_opd"` // Foreign Key ke OPD
 	Nama      string    `gorm:"column:nama;not null;type:varchar(255)" json:"nama"`
 	NIP       string    `gorm:"column:nip;unique;not null;type:varchar(255)" json:"nip"` // Digunakan untuk login
-	Password  string    `gorm:"column:password;not null;type:varchar(255)" json:"-"`      // Sembunyikan saat JSON output
+	Password  string    `gorm:"column:password;not null;type:varchar(255)" json:"-"`     // Sembunyikan saat JSON output
 	Jabatan   string    `gorm:"column:jabatan;type:varchar(255)" json:"jabatan"`
 	CreatedAt time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP" json:"created_at"`
 
@@ -72,7 +73,7 @@ type UserPemda struct {
 	ID        uint      `gorm:"column:id_user_pemda;primaryKey" json:"id_user_pemda"`
 	Nama      string    `gorm:"column:nama;not null;type:varchar(255)" json:"nama"`
 	NIP       string    `gorm:"column:nip;unique;not null;type:varchar(255)" json:"nip"` // Digunakan untuk login
-	Password  string    `gorm:"column:password;not null;type:varchar(255)" json:"-"`      // Sembunyikan saat JSON output
+	Password  string    `gorm:"column:password;not null;type:varchar(255)" json:"-"`     // Sembunyikan saat JSON output
 	Jabatan   string    `gorm:"column:jabatan;type:varchar(255)" json:"jabatan"`
 	CreatedAt time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP" json:"created_at"`
 
@@ -95,7 +96,6 @@ type FormPengajuan struct {
 	IDValidatorPemda *uint `gorm:"column:id_validator_pemda" json:"id_validator_pemda"` // Pointer karena bisa NULL
 
 	// Atribut Transaksi
-	JenisLayanan        string     `gorm:"column:jenis_layanan;not null;type:varchar(255)" json:"jenis_layanan"` // Kategori: Pembangunan, Administrasi, atau Informasi
 	JudulKegiatan       string     `gorm:"column:judul_kegiatan;not null;type:varchar(255)" json:"judul_kegiatan"`
 	Deskripsi           string     `gorm:"column:deskripsi;not null;type:text" json:"deskripsi"`
 	NamaPemohon         string     `gorm:"column:nama_pemohon;not null;type:varchar(255)" json:"nama_pemohon"`

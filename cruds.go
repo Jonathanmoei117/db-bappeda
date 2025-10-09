@@ -145,7 +145,6 @@ func BindFormPengajuanFromMultipartForm(c *gin.Context, form *FormPengajuan) err
 	}
 	form.IDJenisPelayanan = uint(idJenis)
 	
-	form.JenisLayanan = c.PostForm("jenis_layanan")
 	form.JudulKegiatan = c.PostForm("judul_kegiatan")
 	form.Deskripsi = c.PostForm("deskripsi")
 	form.NamaPemohon = c.PostForm("nama_pemohon")
