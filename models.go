@@ -112,20 +112,22 @@ type UserPemda struct {
 // FormPemohon merepresentasikan Data Master Pemohon yang diinput/didaftarkan oleh User OPD.
 // Tabel: form_pemohon (6)
 type FormPemohon struct {
-	ID  uint `gorm:"column:id_form_pemohon;primaryKey" json:"id_form_pemohon"`
+	ID 	uint `gorm:"column:id_form_pemohon;primaryKey" json:"id_form_pemohon"`
 	IDUserOPDInput uint `gorm:"column:id_user_opd_input;not null" json:"id_user_opd_input"` // Petugas OPD yang menginput
-	
+	IDOPD 	uint `gorm:"column:id_opd;not null" json:"id_opd"` 	// <-- RELASI BARU
+
 	// --- DATA PEMOHON ---
 	NamaLengkap string `gorm:"column:nama_lengkap;not null;type:varchar(255)" json:"nama_lengkap"`
-	NIK  string `gorm:"column:nik;unique;not null;type:varchar(255)" json:"nik"`
+	NIK 	string `gorm:"column:nik;unique;not null;type:varchar(255)" json:"nik"`
 	Alamat string `gorm:"column:alamat;type:text" json:"alamat"`
-	NomorHP  string `gorm:"column:nomor_hp;type:varchar(255)" json:"nomor_hp"`
-	Email  string `gorm:"column:email;type:varchar(255)" json:"email"`
+	NomorHP 	string `gorm:"column:nomor_hp;type:varchar(255)" json:"nomor_hp"`
+	Email 	string `gorm:"column:email;type:varchar(255)" json:"email"`
 	
 	CreatedAt time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP" json:"created_at"`
 
 	// Relasi
 	UserOPDInput UserOPD `gorm:"foreignKey:IDUserOPDInput" json:"user_opd_input"`
+	OPD 	OPD `gorm:"foreignKey:IDOPD" json:"opd"` // <-- RELASI BARU
 }
 
 

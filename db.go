@@ -39,6 +39,7 @@ func InitDB() {
 		&JenisPelayanan{},
 		&UserOPD{},
 		&UserPemda{},
+		&FormPemohon{},
 		&FormPengajuan{},
 	)
 	if err != nil {

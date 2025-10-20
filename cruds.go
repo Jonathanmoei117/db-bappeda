@@ -188,7 +188,11 @@ func ValidateJenisPelayanan(c *gin.Context) {
 	c.JSON(http.StatusOK, standar)
 }
 
+
+
+
 // ========= CRUD HANDLERS: FORM PEMOHON (MASTER DATA) =========
+
 
 // CreateFormPemohon: Membuat data master pemohon (oleh User OPD)
 func CreateFormPemohon(c *gin.Context) {
@@ -198,24 +202,28 @@ func CreateFormPemohon(c *gin.Context) {
 		return
 	}
 
-	// Ambil ID User OPD dari token
+	// Ambil ID User OPD dan IDOPD dari token
 	userClaims, _ := c.Get("user")
 	claims := userClaims.(*Claims)
 	form.IDUserOPDInput = claims.ID // Set petugas yang menginput
+	form.IDOPD = claims.IDOPD 	 // <-- PERUBAHAN: Set OPD tempat mendaftar
 
 	if err := DB.Create(&form).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	DB.Preload("UserOPDInput").First(&form, form.ID)
+	// Preload relasi UserOPDInput dan OPD baru
+	DB.Preload("UserOPDInput").Preload("OPD").First(&form, form.ID)
 	c.JSON(http.StatusCreated, form)
 }
 
 // GetAllFormPemohon: Mendapatkan semua data master pemohon
 func GetAllFormPemohon(c *gin.Context) {
 	var forms []FormPemohon
-	if err := DB.Preload("UserOPDInput").Find(&forms).Error; err != nil {
+
+	// Tambahkan Preload("OPD")
+	if err := DB.Preload("UserOPDInput").Preload("OPD").Find(&forms).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -227,7 +235,8 @@ func GetFormPemohonByID(c *gin.Context) {
 	id := c.Param("id")
 	var form FormPemohon
 
-	if err := DB.Preload("UserOPDInput").First(&form, id).Error; err != nil {
+	// Tambahkan Preload("OPD")
+	if err := DB.Preload("UserOPDInput").Preload("OPD").First(&form, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Data pemohon tidak ditemukan"})
 			return
@@ -249,12 +258,7 @@ func UpdateFormPemohon(c *gin.Context) {
 	}
 
 	// Otorisasi: (Opsional) Cek apakah user yang mengedit adalah yang menginput
-	// userClaims, _ := c.Get("user")
-	// claims := userClaims.(*Claims)
-	// if claims.Role == "opd" && form.IDUserOPDInput != claims.ID {
-	// 	c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak memiliki hak akses mengubah data ini"})
-	// 	return
-	// }
+	// ... (logika otorisasi Anda tetap sama)
 
 	var input FormPemohon
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -263,19 +267,21 @@ func UpdateFormPemohon(c *gin.Context) {
 	}
 
 	// Update data
-	// IDUserOPDInput tidak diubah, tetap pencatat awal
+	// IDUserOPDInput dan IDOPD tidak diubah, tetap pencatat awal
 	form.NamaLengkap = input.NamaLengkap
 	form.NIK = input.NIK
 	form.Alamat = input.Alamat
 	form.NomorHP = input.NomorHP
 	form.Email = input.Email
+	// form.IDOPD = input.IDOPD // Sebaiknya jangan diupdate, biarkan tetap
 
 	if err := DB.Save(&form).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui data"})
 		return
 	}
 
-	DB.Preload("UserOPDInput").First(&form, form.ID)
+	// Tambahkan Preload("OPD")
+	DB.Preload("UserOPDInput").Preload("OPD").First(&form, form.ID)
 	c.JSON(http.StatusOK, form)
 }
 
