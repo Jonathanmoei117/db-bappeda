@@ -33,13 +33,13 @@ func main() {
 	r := gin.Default()
 
 	r.Use(cors.New(cors.Config{
-        AllowOrigins:     []string{"http://localhost:3000"},
-        AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-        AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-        ExposeHeaders:    []string{"Content-Length"},
-        AllowCredentials: true,
-        MaxAge:           12 * time.Hour,
-    }))
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	// Static file server untuk folder "uploads"
 	r.Static("/uploads", "./uploads")
@@ -47,76 +47,76 @@ func main() {
 	// Grup utama untuk semua endpoint di bawah /api
 	api := r.Group("/api")
 
-    // =======================================================
-    // --- ROUTE PUBLIK (Tidak Perlu Login) ---
-    // =======================================================
-    api.POST("/login", LoginHandler)
-    
-    api.POST("/logout", LogoutHandler)
+	// =======================================================
+	// --- ROUTE PUBLIK (Tidak Perlu Login) ---
+	// =======================================================
+	api.POST("/login", LoginHandler)
+	api.POST("/logout", LogoutHandler)
 
-    // Rute GET /standar-pelayanan tetap publik agar semua user bisa melihat standar yang tersedia
-    api.GET("/standar-pelayanan", GetAllJenisPelayanan) // Tampilan publik / daftar master
+	// Rute GET /standar-pelayanan tetap publik agar semua user bisa melihat standar yang tersedia
+	api.GET("/standar-pelayanan", GetAllJenisPelayanan) // Tampilan publik / daftar master
 
-    // =======================================================
-    // --- ROUTE KHUSUS ADMIN / SUPERUSER (PEMDA) ---
-    // =======================================================
-    adminRoutes := api.Group("/")
-    adminRoutes.Use(AuthMiddleware("pemda")) // Hanya pemda/admin yang boleh
-    {
-        // 1. Route untuk mengelola data master OPD
-        adminRoutes.POST("/opd", CreateOPD)
-        adminRoutes.GET("/opd", GetAllOPD)
+	// =======================================================
+	// --- ROUTE KHUSUS ADMIN / SUPERUSER (PEMDA) ---
+	// =======================================================
+	adminRoutes := api.Group("/")
+	adminRoutes.Use(AuthMiddleware("pemda")) // Hanya pemda/admin yang boleh
+	{
+		// 1. Route untuk mengelola data master OPD
+		adminRoutes.POST("/opd", CreateOPD)
+		adminRoutes.GET("/opd", GetAllOPD)
 
-        // 2. Route untuk mendaftarkan user baru
-        register := adminRoutes.Group("/register")
-        {
-            register.POST("/opd", CreateUserOPD)
-            register.POST("/pemda", CreateUserPemda)
-        }
-    }
-    // =======================================================
-    // --- ROUTE KHUSUS OPD ---
-    // =======================================================
-    opdRoutes := api.Group("/")
-    opdRoutes.Use(AuthMiddleware("opd")) 
-    {
-        // 1. ROUTE MASTER: OPD membuat standar pelayanan mereka sendiri
-        opdRoutes.POST("/standar-pelayanan", CreateJenisPelayanan) // <-- PERUBAHAN UTAMA
+		// 2. Route untuk mendaftarkan user baru
+		register := adminRoutes.Group("/register")
+		{
+			register.POST("/opd", CreateUserOPD)
+			register.POST("/pemda", CreateUserPemda)
+		}
 
-        // 2. ROUTE TRANSAKSI: Create/Update Form Pengajuan
-        pengajuanOPD := opdRoutes.Group("/pengajuan")
-        {
-            pengajuanOPD.POST("/", CreateFormPengajuan)
-            pengajuanOPD.PUT("/:id", UpdateFormPengajuan)
-            pengajuanOPD.DELETE("/:id", DeleteFormPengajuan) 
-            
-            // OPD melihat laporannya sendiri
-            opdRoutes.GET("/user/:id/pengajuan", GetFormPengajuanByUserOPD) 
-        }
-    }
-    // =======================================================
-    // --- ROUTE UNTUK PEMDA (Melihat & Validasi) ---
-    // =======================================================
-    pemdaRoutes := api.Group("/pengajuan")
-    pemdaRoutes.Use(AuthMiddleware("pemda")) // Hanya Pemda yang boleh
-    {
-        // Pemda bisa melihat semua data (GET all)
-        pemdaRoutes.GET("/", GetAllFormPengajuan) 
+		// 3. Route Validasi Standar Pelayanan (BARU)
+		adminRoutes.POST("/standar-pelayanan/:id/validate", ValidateJenisPelayanan)
 
-        // Pemda bisa melakukan validasi
-        pemdaRoutes.POST("/:id/validate", ValidateFormPengajuan)
-    }
-    // =======================================================
-    // --- ROUTE YANG BISA DIAKSES KEDUA ROLE (Get Detail) ---
-    // =======================================================
-    sharedRoutes := api.Group("/pengajuan")
-    sharedRoutes.Use(AuthMiddleware("opd", "pemda")) // OPD & Pemda boleh
-    {
-        // Keduanya bisa lihat detail
-        sharedRoutes.GET("/:id", GetFormPengajuanByID)
-    }
-	// Middleware CORS
-	
+		// 4. Route Pemda untuk melihat SEMUA Form Pengajuan
+		adminRoutes.GET("/pengajuan", GetAllFormPengajuan)
+	}
+
+	// =======================================================
+	// --- ROUTE KHUSUS OPD ---
+	// =======================================================
+	opdRoutes := api.Group("/")
+	opdRoutes.Use(AuthMiddleware("opd"))
+	{
+		// 1. ROUTE MASTER: OPD membuat standar pelayanan mereka sendiri
+		opdRoutes.POST("/standar-pelayanan", CreateJenisPelayanan)
+		opdRoutes.GET("/standar-pelayanan/opd/:id_opd", GetStandarPelayananByOPD)
+		opdRoutes.GET("/user/:id/pengajuan", GetFormPengajuanByUserOPD)
+
+		// 2. ROUTE TRANSAKSI: Create/Update Form Pengajuan
+		opdRoutes.POST("/pengajuan", CreateFormPengajuan)
+		opdRoutes.PUT("/pengajuan/:id", UpdateFormPengajuan)
+		opdRoutes.DELETE("/pengajuan/:id", DeleteFormPengajuan)
+
+		// 3. ROUTE MASTER PEMOHON: OPD mengelola data master pemohon (BARU)
+		pemohonRoutes := opdRoutes.Group("/form-pemohon")
+		{
+			pemohonRoutes.POST("/", CreateFormPemohon)
+			pemohonRoutes.GET("/", GetAllFormPemohon)
+			pemohonRoutes.GET("/:id", GetFormPemohonByID)
+			pemohonRoutes.PUT("/:id", UpdateFormPemohon)
+			pemohonRoutes.DELETE("/:id", DeleteFormPemohon)
+		}
+	}
+
+	// =======================================================
+	// --- ROUTE YANG BISA DIAKSES KEDUA ROLE (Get Detail) ---
+	// =======================================================
+	sharedRoutes := api.Group("/") // <-- Grup ini tidak lagi "/pengajuan"
+	sharedRoutes.Use(AuthMiddleware("opd", "pemda")) // OPD & Pemda boleh
+	{
+		// Keduanya bisa lihat detail pengajuan
+		sharedRoutes.GET("/pengajuan/:id", GetFormPengajuanByID)
+	}
+
 	// Start server
 	port := ":8080"
 	log.Println("🚀 Server running on http://localhost" + port)

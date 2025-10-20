@@ -48,7 +48,7 @@ func CreateUserPemda(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	user.Password = ""
 	c.JSON(http.StatusCreated, user)
 }
@@ -77,6 +77,8 @@ func GetAllOPD(c *gin.Context) {
 	c.JSON(http.StatusOK, opds)
 }
 
+// ========= CRUD HANDLERS: JENIS PELAYANAN (STANDAR PELAYANAN) =========
+
 func CreateJenisPelayanan(c *gin.Context) {
 	var standar JenisPelayanan
 	if err := c.ShouldBindJSON(&standar); err != nil {
@@ -90,7 +92,10 @@ func CreateJenisPelayanan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID OPD tidak valid"})
 		return
 	}
-	
+
+	// Set default status validasi
+	standar.StatusValidasi = "Menunggu Validasi"
+
 	if err := DB.Create(&standar).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -102,17 +107,192 @@ func CreateJenisPelayanan(c *gin.Context) {
 
 func GetAllJenisPelayanan(c *gin.Context) {
 	var standar []JenisPelayanan
-	// Preload OPD agar informasi OPD ikut terambil
-	if err := DB.Preload("OPD").Find(&standar).Error; err != nil {
+	// Preload OPD dan ValidatorPemda agar informasi ikut terambil
+	if err := DB.Preload("OPD").Preload("ValidatorPemda").Find(&standar).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, standar)
 }
 
+// GetStandarPelayananByOPD: Mendapatkan semua standar pelayanan berdasarkan ID OPD
+func GetStandarPelayananByOPD(c *gin.Context) {
+	idOpdStr := c.Param("id_opd")
+	if idOpdStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID OPD tidak boleh kosong"})
+		return
+	}
 
-// ========= HELPER UNTUK AMBIL FILE & FORM VALUE =========
+	var standarPelayanan []JenisPelayanan
 
+	err := DB.Where("id_opd = ?", idOpdStr).
+		Preload("OPD").
+		Preload("ValidatorPemda").
+		Find(&standarPelayanan).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil data dari database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": standarPelayanan})
+}
+
+// ValidateJenisPelayanan: Memvalidasi standar pelayanan (Hanya oleh User Pemda)
+func ValidateJenisPelayanan(c *gin.Context) {
+	id := c.Param("id")
+	var standar JenisPelayanan
+
+	// 1. Cari standar
+	if err := DB.First(&standar, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Standar Pelayanan tidak ditemukan"})
+		return
+	}
+
+	// 2. Cek status
+	if standar.StatusValidasi != "Menunggu Validasi" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Standar ini sudah divalidasi sebelumnya"})
+		return
+	}
+
+	// 3. Bind request body validasi
+	var req ValidasiRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
+		return
+	}
+
+	// 4. Ambil ID Validator dari token
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+	validatorIDFromToken := claims.ID
+	now := time.Now()
+
+	// 5. Update field
+	standar.StatusValidasi = req.StatusValidasi
+
+	if req.KeteranganValidasi != "" {
+		standar.KeteranganValidasi = &req.KeteranganValidasi
+	} else {
+		standar.KeteranganValidasi = nil
+	}
+
+	standar.IDValidatorPemda = &validatorIDFromToken
+	standar.TanggalValidasi = &now
+
+	// 6. Simpan
+	DB.Save(&standar)
+
+	// 7. Response
+	DB.Preload("ValidatorPemda").Preload("OPD").First(&standar, standar.ID)
+	c.JSON(http.StatusOK, standar)
+}
+
+// ========= CRUD HANDLERS: FORM PEMOHON (MASTER DATA) =========
+
+// CreateFormPemohon: Membuat data master pemohon (oleh User OPD)
+func CreateFormPemohon(c *gin.Context) {
+	var form FormPemohon
+	if err := c.ShouldBindJSON(&form); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
+		return
+	}
+
+	// Ambil ID User OPD dari token
+	userClaims, _ := c.Get("user")
+	claims := userClaims.(*Claims)
+	form.IDUserOPDInput = claims.ID // Set petugas yang menginput
+
+	if err := DB.Create(&form).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	DB.Preload("UserOPDInput").First(&form, form.ID)
+	c.JSON(http.StatusCreated, form)
+}
+
+// GetAllFormPemohon: Mendapatkan semua data master pemohon
+func GetAllFormPemohon(c *gin.Context) {
+	var forms []FormPemohon
+	if err := DB.Preload("UserOPDInput").Find(&forms).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, forms)
+}
+
+// GetFormPemohonByID: Mendapatkan detail satu pemohon
+func GetFormPemohonByID(c *gin.Context) {
+	id := c.Param("id")
+	var form FormPemohon
+
+	if err := DB.Preload("UserOPDInput").First(&form, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Data pemohon tidak ditemukan"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, form)
+}
+
+// UpdateFormPemohon: Memperbarui data master pemohon
+func UpdateFormPemohon(c *gin.Context) {
+	id := c.Param("id")
+	var form FormPemohon
+
+	if err := DB.First(&form, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Data pemohon tidak ditemukan"})
+		return
+	}
+
+	// Otorisasi: (Opsional) Cek apakah user yang mengedit adalah yang menginput
+	// userClaims, _ := c.Get("user")
+	// claims := userClaims.(*Claims)
+	// if claims.Role == "opd" && form.IDUserOPDInput != claims.ID {
+	// 	c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak memiliki hak akses mengubah data ini"})
+	// 	return
+	// }
+
+	var input FormPemohon
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
+		return
+	}
+
+	// Update data
+	// IDUserOPDInput tidak diubah, tetap pencatat awal
+	form.NamaLengkap = input.NamaLengkap
+	form.NIK = input.NIK
+	form.Alamat = input.Alamat
+	form.NomorHP = input.NomorHP
+	form.Email = input.Email
+
+	if err := DB.Save(&form).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui data"})
+		return
+	}
+
+	DB.Preload("UserOPDInput").First(&form, form.ID)
+	c.JSON(http.StatusOK, form)
+}
+
+// DeleteFormPemohon: Menghapus data master pemohon
+func DeleteFormPemohon(c *gin.Context) {
+	id := c.Param("id")
+	if err := DB.Delete(&FormPemohon{}, id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus data"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Data pemohon berhasil dihapus"})
+}
+
+
+// ========= HELPER UNTUK AMBIL FILE & FORM VALUE (FORM PENGAJUAN) =========
+
+// BindFormPengajuanFromMultipartForm diperbarui untuk ERD V8
 func BindFormPengajuanFromMultipartForm(c *gin.Context, form *FormPengajuan) error {
 	// Parsing form
 	if err := c.Request.ParseMultipartForm(10 << 20); err != nil { // 10 MB limit
@@ -121,42 +301,56 @@ func BindFormPengajuanFromMultipartForm(c *gin.Context, form *FormPengajuan) err
 
 	// Handle file upload
 	var uploadedFilename *string
-	_, handler, err := c.Request.FormFile("berkas_pengajuan")
-	if err == nil { 
+	_, handler, err := c.Request.FormFile("dokumen_pengajuan") // <-- Nama field file baru
+	if err == nil {
 		os.MkdirAll("./uploads", os.ModePerm)
-		filePath := "./uploads/" + handler.Filename
+		// Tambahkan timestamp unik untuk menghindari nama file yang sama
+		filePath := "./uploads/" + strconv.FormatInt(time.Now().Unix(), 10) + "_" + handler.Filename
 		if err := c.SaveUploadedFile(handler, filePath); err != nil {
 			return errors.New("Gagal menyimpan file: " + err.Error())
 		}
-		// Set path file yang baru diupload
-		uploadedFilename = &filePath 
-	} else if form.BerkasPengajuanPath != nil {
+		uploadedFilename = &filePath
+	} else if form.DokumenPengajuanPath != nil {
 		// Jika tidak ada file baru diupload, pertahankan path yang lama (untuk update)
-		uploadedFilename = form.BerkasPengajuanPath 
+		uploadedFilename = form.DokumenPengajuanPath
 	}
 
 	// --- BIND FIELD WAJIB ---
-	
-	// Konversi ID Jenis Pelayanan (Wajib diisi)
+
+	// Konversi ID OPD (Baru)
+	idOpdStr := c.PostForm("id_opd")
+	idOpd, err := strconv.ParseUint(idOpdStr, 10, 64)
+	if err != nil {
+		return errors.New("ID OPD tidak valid atau kosong")
+	}
+	form.IDOPD = uint(idOpd)
+
+	// Konversi ID Jenis Pelayanan
 	idJenisStr := c.PostForm("id_jenis_pelayanan")
 	idJenis, err := strconv.ParseUint(idJenisStr, 10, 64)
 	if err != nil {
 		return errors.New("ID Jenis Pelayanan tidak valid atau kosong")
 	}
 	form.IDJenisPelayanan = uint(idJenis)
-	
-	form.JudulKegiatan = c.PostForm("judul_kegiatan")
-	form.Deskripsi = c.PostForm("deskripsi")
-	form.NamaPemohon = c.PostForm("nama_pemohon")
-	form.InstansiPemohon = c.PostForm("instansi_pemohon")
 
-	// --- BIND FIELD OPSIONAL (NULLABLE) ---
+	// Bind Data Pemohon (Baru)
+	form.NamaPemohonLengkap = c.PostForm("nama_pemohon_lengkap")
+	form.NIKPemohon = c.PostForm("nik_pemohon")
+	form.JudulPengajuan = c.PostForm("judul_pengajuan")
 
-	if nip := c.PostForm("nip_pemohon"); nip != "" {
-		form.NIPPemohon = &nip
-	} else {
-		form.NIPPemohon = nil
+	// Bind Checkbox
+	isAgreedStr := c.PostForm("is_agreed")
+	isAgreed, err := strconv.ParseBool(isAgreedStr)
+	if err != nil {
+		form.IsAgreed = false // Default jika parsing gagal
 	}
+	form.IsAgreed = isAgreed
+
+	// --- BIND FIELD OPSIONAL (NULLABLE/TEXT/VARCHAR) ---
+	form.AlamatPemohon = c.PostForm("alamat_pemohon")
+	form.NomorHPPemohon = c.PostForm("nomor_hp_pemohon")
+	form.EmailPemohon = c.PostForm("email_pemohon")
+	form.DeskripsiSingkat = c.PostForm("deskripsi_singkat")
 
 	// Bind Tanggal (Periode Mulai)
 	if mulaiStr := c.PostForm("periode_mulai"); mulaiStr != "" {
@@ -177,13 +371,18 @@ func BindFormPengajuanFromMultipartForm(c *gin.Context, form *FormPengajuan) err
 	} else {
 		form.PeriodeSelesai = nil
 	}
-	
-	form.BerkasPengajuanPath = uploadedFilename
+
+	form.DokumenPengajuanPath = uploadedFilename // <-- Nama field struct baru
+
+	// Validasi Sederhana
+	if form.NamaPemohonLengkap == "" || form.NIKPemohon == "" || form.JudulPengajuan == "" {
+		return errors.New("nama Pemohon, NIK Pemohon, dan Judul Pengajuan tidak boleh kosong")
+	}
 
 	return nil
 }
 
-// =========== FORM PENGAJUAN KHUSUS OPD =================
+// =========== FORM PENGAJUAN (TRANSAKSI) KHUSUS OPD =================
 
 func CreateFormPengajuan(c *gin.Context) {
 	// Ambil ID User OPD dari token
@@ -192,16 +391,15 @@ func CreateFormPengajuan(c *gin.Context) {
 
 	var form FormPengajuan
 	form.IDUserOPD = claims.ID // Ambil ID dari user yang login
-	
+
 	if err := BindFormPengajuanFromMultipartForm(c, &form); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// StatusProses & StatusValidasi sudah memiliki default di models.go, 
-	// tapi kita set lagi untuk kepastian
+	// StatusProses sudah memiliki default di models.go
 	form.StatusProses = "Baru"
-	form.StatusValidasi = "Menunggu Validasi"
+	// StatusValidasi DIHAPUS
 
 	if err := DB.Create(&form).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan data: " + err.Error()})
@@ -209,50 +407,46 @@ func CreateFormPengajuan(c *gin.Context) {
 	}
 
 	// Ambil kembali data dengan relasi untuk response
-	DB.Preload("UserOPD.OPD").Preload("JenisPelayanan.OPD").First(&form, form.ID)
+	DB.Preload("UserOPD.OPD").Preload("JenisPelayanan.OPD").Preload("OPD").First(&form, form.ID)
 	c.JSON(http.StatusCreated, form)
 }
 
 // GetAllFormPengajuan: Mendapatkan semua pengajuan (untuk Pemda/Admin)
 func GetAllFormPengajuan(c *gin.Context) {
-	log.Println("--- 1. MASUK KE HANDLER GetAllFormPengajuan ---")
+	var forms []FormPengajuan
 
-    var forms []FormPengajuan
-    log.Println("--- 2. Variabel 'forms' berhasil dibuat ---")
+	tx := DB.Preload("UserOPD.OPD").
+		Preload("JenisPelayanan.OPD").
+		Preload("OPD"). // Preload OPD yang dituju
+		Find(&forms)
 
-    // Kita coba query TANPA Preload dulu untuk menyederhanakan
-    tx := DB.Find(&forms)
-    log.Println("--- 3. Perintah DB.Find sudah dieksekusi ---")
+	if tx.Error != nil {
+		log.Println("!!! ERROR SAAT QUERY DATABASE:", tx.Error.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
+		return
+	}
 
-    if tx.Error != nil {
-        log.Println("!!! ERROR SAAT QUERY DATABASE:", tx.Error.Error())
-        c.JSON(http.StatusInternalServerError, gin.H{"error": tx.Error.Error()})
-        return
-    }
-
-    log.Println("--- 4. Query database BERHASIL. Jumlah data:", tx.RowsAffected, "---")
-
-    c.JSON(http.StatusOK, forms)
-    log.Println("--- 5. Response JSON berhasil dikirim ---")
+	log.Println("--- Query GetAllFormPengajuan BERHASIL. Jumlah data:", tx.RowsAffected, "---")
+	c.JSON(http.StatusOK, forms)
 }
 
-// GetFormPengajuanByUserOPD: Mendapatkan pengajuan berdasarkan user OPD ID (untuk User Pemda atau User OPD itu sendiri)
+// GetFormPengajuanByUserOPD: Mendapatkan pengajuan berdasarkan user OPD ID
 func GetFormPengajuanByUserOPD(c *gin.Context) {
-    userOpdID := c.Param("id")
-    var forms []FormPengajuan
-    
-    // Cari Form Pengajuan berdasarkan IDUserOPD
-    err := DB.Where("id_user_opd = ?", userOpdID).
+	userOpdID := c.Param("id")
+	var forms []FormPengajuan
+
+	err := DB.Where("id_user_opd = ?", userOpdID).
 		Preload("UserOPD.OPD").
 		Preload("JenisPelayanan.OPD").
+		Preload("OPD").
 		Find(&forms).Error
-		
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-        return
-    }
 
-    c.JSON(http.StatusOK, forms)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, forms)
 }
 
 // GetFormPengajuanByID: Mendapatkan detail pengajuan
@@ -260,8 +454,8 @@ func GetFormPengajuanByID(c *gin.Context) {
 	formID := c.Param("id")
 	var form FormPengajuan
 
-	// Preload semua relasi
-	if err := DB.Preload("UserOPD.OPD").Preload("JenisPelayanan.OPD").Preload("ValidatorPemda").First(&form, formID).Error; err != nil {
+	// Preload semua relasi (ValidatorPemda DIHAPUS)
+	if err := DB.Preload("UserOPD.OPD").Preload("JenisPelayanan.OPD").Preload("OPD").First(&form, formID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Data pengajuan tidak ditemukan"})
 			return
@@ -270,15 +464,14 @@ func GetFormPengajuanByID(c *gin.Context) {
 		return
 	}
 
-	// Otorisasi: Cek apakah user OPD yang login adalah pemilik data
-	// (Jika API ini dilindungi middleware Otorisasi)
+	// Otorisasi: (Opsional) Cek apakah user OPD yang login adalah pemilik data
 	userClaims, exists := c.Get("user")
 	if exists {
 		claims := userClaims.(*Claims)
 		// Jika role-nya OPD dan bukan pemilik data, tolak
 		if claims.Role == "opd" && form.IDUserOPD != claims.ID {
-			 c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak memiliki hak akses untuk melihat data ini"})
-			 return
+			c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak memiliki hak akses untuk melihat data ini"})
+			return
 		}
 	}
 
@@ -296,9 +489,9 @@ func UpdateFormPengajuan(c *gin.Context) {
 		return
 	}
 
-	// 2. Cek status validasi: Tidak boleh diubah jika sudah Disetujui/Ditolak
-	if form.StatusValidasi != "Menunggu Validasi" && form.StatusValidasi != "Baru" {
-		 c.JSON(http.StatusForbidden, gin.H{"error": "Data ini sudah divalidasi dan tidak dapat diubah"})
+	// 2. Cek status (Opsional: Cek StatusProses)
+	if form.StatusProses == "Selesai" {
+		 c.JSON(http.StatusForbidden, gin.H{"error": "Data ini sudah Selesai dan tidak dapat diubah"})
 		 return
 	}
 
@@ -307,7 +500,7 @@ func UpdateFormPengajuan(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	// 4. Simpan perubahan
 	if err := DB.Save(&form).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui data"})
@@ -315,14 +508,14 @@ func UpdateFormPengajuan(c *gin.Context) {
 	}
 
 	// 5. Response
-	DB.Preload("UserOPD.OPD").Preload("JenisPelayanan.OPD").First(&form, form.ID)
+	DB.Preload("UserOPD.OPD").Preload("JenisPelayanan.OPD").Preload("OPD").First(&form, form.ID)
 	c.JSON(http.StatusOK, form)
 }
 
 // DeleteFormPengajuan: Menghapus data pengajuan
 func DeleteFormPengajuan(c *gin.Context) {
 	id := c.Param("id")
-	// Biasanya ini adalah Soft Delete atau hanya diizinkan jika statusnya "Baru" atau "Ditolak"
+	// Di dunia nyata, Anda mungkin ingin memeriksa status sebelum menghapus
 	if err := DB.Delete(&FormPengajuan{}, id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus data"})
 		return
@@ -330,53 +523,5 @@ func DeleteFormPengajuan(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Data berhasil dihapus"})
 }
 
-// ValidateFormPengajuan: Memvalidasi pengajuan (Hanya oleh User Pemda)
-func ValidateFormPengajuan(c *gin.Context) {
-	id := c.Param("id")
-	var form FormPengajuan
-
-	// 1. Cari form
-	if err := DB.First(&form, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Form Pengajuan tidak ditemukan"})
-		return
-	}
-
-	// 2. Cek status
-	if form.StatusValidasi != "Menunggu Validasi" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Form ini sudah divalidasi sebelumnya"})
-		return
-	}
-
-	// 3. Bind request body validasi
-	var req ValidasiRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Request body tidak valid"})
-		return
-	}
-
-	// 4. Ambil ID Validator dari token
-	userClaims, _ := c.Get("user")
-	claims := userClaims.(*Claims)
-	validatorIDFromToken := claims.ID 
-	now := time.Now()
-
-	// 5. Update field
-	form.StatusValidasi = req.StatusValidasi
-	
-	// KeteranganValidasi adalah *string (pointer)
-	if req.KeteranganValidasi != "" {
-		form.KeteranganValidasi = &req.KeteranganValidasi
-	} else {
-		form.KeteranganValidasi = nil
-	}
-	
-	form.IDValidatorPemda = &validatorIDFromToken
-	form.TanggalValidasi = &now
-
-	// 6. Simpan
-	DB.Save(&form)
-	
-	// 7. Response
-	DB.Preload("ValidatorPemda").Preload("UserOPD.OPD").Preload("JenisPelayanan.OPD").First(&form, form.ID)
-	c.JSON(http.StatusOK, form)
-}
+// ValidateFormPengajuan: DIHAPUS KARENA PINDAH KE JENIS PELAYANAN
+// func ValidateFormPengajuan(c *gin.Context) { ... }
